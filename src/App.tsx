@@ -17,17 +17,15 @@ import {
   DocState,
   EDITABLE_TYPES,
   ElementType,
-  FONT_SIZES,
-  HEADING_SIZES,
   Side,
   TextAlign,
   Viewport,
   newId,
 } from './types'
-import { connectorGeometry, nearestSide } from './geometry'
+import { aimedSide, connectorGeometry, nearestT, pointAt } from './geometry'
 import { fileToDataUrl } from './imageUpload'
 import { exportBoardFile, exportFramePdf, exportFramePng, parseBoardFile } from './exporting'
-import { ElementView, effectiveFontSize, effectiveWeight } from './components/ElementView'
+import { ElementView, ResizeDir, effectiveFontSize, effectiveWeight } from './components/ElementView'
 import { BoardsPanel } from './components/BoardsPanel'
 import { ConnectorLayer, TempConnector } from './components/ConnectorLayer'
 import { SlashAction, SlashMenu } from './components/SlashMenu'
@@ -40,6 +38,10 @@ import { ZoomControls } from './components/ZoomControls'
 
 const MIN_ZOOM = 0.12
 const MAX_ZOOM = 4
+/** Snap radius (screen px) around an element when dropping a connector end. */
+const CONNECT_SNAP_PX = 48
+/** How close (screen px) the pointer must be to a port to pin the connector to it. */
+const PORT_AIM_PX = 44
 
 type Gesture =
   | { mode: 'pan'; startX: number; startY: number; vp: Viewport }
@@ -50,10 +52,22 @@ type Gesture =
       base: DocState
       moved: boolean
     }
-  | { mode: 'resize'; id: string; startWorld: { x: number; y: number }; w: number; h: number; base: DocState }
+  | {
+      mode: 'resize'
+      id: string
+      dir: ResizeDir
+      startWorld: { x: number; y: number }
+      x: number
+      y: number
+      w: number
+      h: number
+      base: DocState
+    }
   | { mode: 'marquee'; startWorld: { x: number; y: number } }
   | { mode: 'connect'; fromId: string; fromSide: Side; base: DocState }
   | { mode: 'reconnect'; connectorId: string; end: 'from' | 'to'; base: DocState }
+  | { mode: 'bend'; connectorId: string; startX: number; startY: number; moved: boolean; base: DocState }
+  | { mode: 'dragLabel'; connectorId: string; startX: number; startY: number; moved: boolean; base: DocState }
 
 interface Popup {
   screenX: number
@@ -68,6 +82,22 @@ interface Clipboard {
 }
 
 const EDITABLE_OR_FRAME = (type: ElementType) => EDITABLE_TYPES.includes(type) || type === 'frame'
+
+/**
+ * Paint order, back to front: frames, then shapes, then everything else.
+ * Shapes stay behind so a rectangle dropped over stickies doesn't swallow
+ * clicks meant for them. Relative order inside each band is preserved, so
+ * newer elements still paint over older ones within a band.
+ */
+const BEHIND_CONNECTORS = new Set<ElementType>(['frame', 'rect', 'ellipse'])
+
+function stackOrder(elements: CanvasElement[]): CanvasElement[] {
+  const band = (t: ElementType) => (t === 'frame' ? 0 : BEHIND_CONNECTORS.has(t) ? 1 : 2)
+  return elements
+    .map((el, i) => ({ el, i }))
+    .sort((a, b) => band(a.el.type) - band(b.el.type) || a.i - b.i)
+    .map(({ el }) => el)
+}
 
 function frameContains(frame: CanvasElement, el: CanvasElement): boolean {
   const cx = el.x + el.w / 2
@@ -118,6 +148,16 @@ export default function App() {
   // manual double-click detection: pointer capture on the root retargets
   // native click/dblclick events away from elements, so we can't rely on them
   const lastClick = useRef<{ id: string; time: number; x: number; y: number } | null>(null)
+
+  // capture on the root so move/up events keep flowing during gestures;
+  // tolerate inactive/synthetic pointers
+  const capturePointer = (e: React.PointerEvent) => {
+    try {
+      rootRef.current?.setPointerCapture(e.pointerId)
+    } catch {
+      // pointer no longer active — gesture still works while it stays over the canvas
+    }
+  }
 
   const toWorld = (sx: number, sy: number) => ({
     x: (sx - vpRef.current.x) / vpRef.current.zoom,
@@ -266,7 +306,7 @@ export default function App() {
       return
     }
 
-    rootRef.current?.setPointerCapture(e.pointerId)
+    capturePointer(e)
 
     let sel = selection
     if (e.shiftKey) {
@@ -305,22 +345,77 @@ export default function App() {
     if (EDITABLE_OR_FRAME(el.type)) startEditing(el)
   }
 
-  function handleResizeStart(e: React.PointerEvent, el: CanvasElement) {
+  function handleResizeStart(e: React.PointerEvent, el: CanvasElement, dir: ResizeDir) {
     if (e.button !== 0) return
-    rootRef.current?.setPointerCapture(e.pointerId)
+    capturePointer(e)
     gesture.current = {
       mode: 'resize',
       id: el.id,
+      dir,
       startWorld: toWorld(e.clientX, e.clientY),
+      x: el.x,
+      y: el.y,
       w: el.w,
       h: el.h,
       base: docRef.current,
     }
   }
 
+  function handleConnectorPointerDown(e: React.PointerEvent, id: string) {
+    if (e.button !== 0) return
+    const prev = lastClick.current
+    lastClick.current = { id: `conn:${id}`, time: e.timeStamp, x: e.clientX, y: e.clientY }
+    setSelectedConnector(id)
+    setSelection(new Set())
+    if (
+      prev &&
+      prev.id === `conn:${id}` &&
+      e.timeStamp - prev.time < 450 &&
+      Math.hypot(e.clientX - prev.x, e.clientY - prev.y) < 6
+    ) {
+      setEditingConnLabel(id)
+      return
+    }
+    capturePointer(e)
+    gesture.current = {
+      mode: 'bend',
+      connectorId: id,
+      startX: e.clientX,
+      startY: e.clientY,
+      moved: false,
+      base: docRef.current,
+    }
+  }
+
+  function handleLabelPointerDown(e: React.PointerEvent, id: string) {
+    if (e.button !== 0) return
+    const prev = lastClick.current
+    lastClick.current = { id: `label:${id}`, time: e.timeStamp, x: e.clientX, y: e.clientY }
+    setSelectedConnector(id)
+    setSelection(new Set())
+    if (
+      prev &&
+      prev.id === `label:${id}` &&
+      e.timeStamp - prev.time < 450 &&
+      Math.hypot(e.clientX - prev.x, e.clientY - prev.y) < 6
+    ) {
+      setEditingConnLabel(id)
+      return
+    }
+    capturePointer(e)
+    gesture.current = {
+      mode: 'dragLabel',
+      connectorId: id,
+      startX: e.clientX,
+      startY: e.clientY,
+      moved: false,
+      base: docRef.current,
+    }
+  }
+
   function handlePortDown(e: React.PointerEvent, el: CanvasElement, side: Side) {
     if (e.button !== 0) return
-    rootRef.current?.setPointerCapture(e.pointerId)
+    capturePointer(e)
     gesture.current = { mode: 'connect', fromId: el.id, fromSide: side, base: docRef.current }
     setTempConn({
       fixedId: el.id,
@@ -335,7 +430,7 @@ export default function App() {
     if (e.button !== 0) return
     const conn = docRef.current.connectors.find((c) => c.id === connectorId)
     if (!conn) return
-    rootRef.current?.setPointerCapture(e.pointerId)
+    capturePointer(e)
     gesture.current = { mode: 'reconnect', connectorId, end, base: docRef.current }
     setTempConn({
       fixedId: end === 'from' ? conn.to : conn.from,
@@ -347,11 +442,38 @@ export default function App() {
     })
   }
 
-  function elementUnderPointer(e: React.PointerEvent): string | null {
-    const under = document
-      .elementFromPoint(e.clientX, e.clientY)
-      ?.closest('[data-element-id]') as HTMLElement | null
-    return under?.dataset.elementId ?? null
+  /**
+   * Element a dragged connector end should snap to: the topmost one whose box
+   * is within CONNECT_SNAP_PX (screen space) of the pointer, so you don't have
+   * to land exactly on it. Frames are skipped — their bodies aren't targets.
+   */
+  function connectTargetAt(e: React.PointerEvent, excludeId: string): string | null {
+    const pt = toWorld(e.clientX, e.clientY)
+    const tol = CONNECT_SNAP_PX / vpRef.current.zoom
+    let best: string | null = null
+    let bestDist = Infinity
+    for (const el of stackOrder(docRef.current.elements)) {
+      if (el.id === excludeId || el.type === 'frame') continue
+      const dx = Math.max(el.x - pt.x, 0, pt.x - (el.x + el.w))
+      const dy = Math.max(el.y - pt.y, 0, pt.y - (el.y + el.h))
+      const d = Math.hypot(dx, dy)
+      if (d > tol) continue
+      // overlapping (d === 0) beats merely nearby; ties go to whatever is
+      // drawn on top, matching what the pointer looks like it's over
+      if (d <= bestDist) {
+        bestDist = d
+        best = el.id
+      }
+    }
+    return best
+  }
+
+  /** Port on `targetId` the pointer is aiming at, if any (see aimedSide). */
+  function aimedSideAt(e: React.PointerEvent, targetId: string | null): Side | undefined {
+    if (!targetId) return undefined
+    const target = docRef.current.elements.find((el) => el.id === targetId)
+    if (!target) return undefined
+    return aimedSide(target, toWorld(e.clientX, e.clientY), PORT_AIM_PX / vpRef.current.zoom)
   }
 
   function handleRootPointerDown(e: React.PointerEvent) {
@@ -359,14 +481,14 @@ export default function App() {
     setPicker(null)
     setBoardsOpen(false)
     if (e.button === 1 || (e.button === 0 && spaceDown)) {
-      rootRef.current?.setPointerCapture(e.pointerId)
+      capturePointer(e)
       gesture.current = { mode: 'pan', startX: e.clientX, startY: e.clientY, vp: vpRef.current }
       setIsPanning(true)
       return
     }
     if (e.button !== 0) return
     // empty canvas: start marquee selection
-    rootRef.current?.setPointerCapture(e.pointerId)
+    capturePointer(e)
     setSelection(new Set())
     setSelectedConnector(null)
     gesture.current = { mode: 'marquee', startWorld: toWorld(e.clientX, e.clientY) }
@@ -392,14 +514,61 @@ export default function App() {
       )
     } else if (g.mode === 'resize') {
       const w = toWorld(e.clientX, e.clientY)
-      const dw = w.x - g.startWorld.x
-      const dh = w.y - g.startWorld.y
-      set((d) =>
-        updateElement(d, g.id, {
-          w: Math.max(40, g.w + dw),
-          h: Math.max(28, g.h + dh),
-        })
-      )
+      const dx = w.x - g.startWorld.x
+      const dy = w.y - g.startWorld.y
+      let nw = g.w
+      let nh = g.h
+      if (g.dir === 'e' || g.dir === 'se') nw = g.w + dx
+      if (g.dir === 'w') nw = g.w - dx
+      if (g.dir === 's' || g.dir === 'se') nh = g.h + dy
+      if (g.dir === 'n') nh = g.h - dy
+      if (e.shiftKey) {
+        const el = docRef.current.elements.find((x) => x.id === g.id)
+        if (el && (el.type === 'rect' || el.type === 'ellipse')) {
+          // perfect square / circle
+          const size = g.dir === 'n' || g.dir === 's' ? nh : g.dir === 'e' || g.dir === 'w' ? nw : Math.max(nw, nh)
+          nw = size
+          nh = size
+        } else {
+          // keep the original aspect ratio
+          const ratio = g.w / Math.max(1, g.h)
+          if (g.dir === 'n' || g.dir === 's') nw = nh * ratio
+          else nh = nw / ratio
+        }
+      }
+      nw = Math.max(40, nw)
+      nh = Math.max(28, nh)
+      // west/north drags move the origin so the opposite edge stays put
+      const nx = g.dir === 'w' ? g.x + (g.w - nw) : g.x
+      const ny = g.dir === 'n' ? g.y + (g.h - nh) : g.y
+      set((d) => updateElement(d, g.id, { x: nx, y: ny, w: nw, h: nh }))
+    } else if (g.mode === 'bend') {
+      if (!g.moved && Math.hypot(e.clientX - g.startX, e.clientY - g.startY) < 4) return
+      g.moved = true
+      const conn = docRef.current.connectors.find((c) => c.id === g.connectorId)
+      if (!conn) return
+      const from = docRef.current.elements.find((el) => el.id === conn.from)
+      const to = docRef.current.elements.find((el) => el.id === conn.to)
+      if (!from || !to) return
+      const w = toWorld(e.clientX, e.clientY)
+      const geo0 = connectorGeometry(from, to, conn.fromSide, conn.toSide, 0)
+      // shifting both control points by k·n moves the curve midpoint by 0.75·k
+      let bend =
+        ((w.x - geo0.mid.x) * geo0.normal.x + (w.y - geo0.mid.y) * geo0.normal.y) / 0.75
+      if (Math.abs(bend) < 12) bend = 0 // snap back to straight
+      set((d) => updateConnector(d, g.connectorId, { bend }))
+    } else if (g.mode === 'dragLabel') {
+      if (!g.moved && Math.hypot(e.clientX - g.startX, e.clientY - g.startY) < 4) return
+      g.moved = true
+      const conn = docRef.current.connectors.find((c) => c.id === g.connectorId)
+      if (!conn) return
+      const from = docRef.current.elements.find((el) => el.id === conn.from)
+      const to = docRef.current.elements.find((el) => el.id === conn.to)
+      if (!from || !to) return
+      const w = toWorld(e.clientX, e.clientY)
+      const geo = connectorGeometry(from, to, conn.fromSide, conn.toSide, conn.bend ?? 0)
+      const t = Math.min(0.92, Math.max(0.08, nearestT(geo, w)))
+      set((d) => updateConnector(d, g.connectorId, { labelT: t }))
     } else if (g.mode === 'marquee') {
       const w = toWorld(e.clientX, e.clientY)
       const rect = {
@@ -430,12 +599,13 @@ export default function App() {
       }
       setSelection(hit)
     } else if (g.mode === 'connect') {
-      const targetId = elementUnderPointer(e)
+      const targetId = connectTargetAt(e, g.fromId)
       setTempConn({
         fixedId: g.fromId,
         fixedSide: g.fromSide,
         freeWorld: toWorld(e.clientX, e.clientY),
         targetId: targetId !== g.fromId ? targetId : null,
+        targetSide: aimedSideAt(e, targetId),
         freeIsTo: true,
       })
     } else if (g.mode === 'reconnect') {
@@ -443,12 +613,13 @@ export default function App() {
       if (!conn) return
       const fixedId = g.end === 'from' ? conn.to : conn.from
       const fixedSide = g.end === 'from' ? conn.toSide : conn.fromSide
-      const targetId = elementUnderPointer(e)
+      const targetId = connectTargetAt(e, fixedId)
       setTempConn({
         fixedId,
         fixedSide,
         freeWorld: toWorld(e.clientX, e.clientY),
         targetId: targetId !== fixedId ? targetId : null,
+        targetSide: aimedSideAt(e, targetId),
         reconnectingId: g.connectorId,
         freeIsTo: g.end === 'to',
       })
@@ -464,13 +635,14 @@ export default function App() {
     if (!g) return
     if (g.mode === 'drag' && g.moved) pushHistory(g.base)
     if (g.mode === 'resize') pushHistory(g.base)
+    if ((g.mode === 'bend' || g.mode === 'dragLabel') && g.moved) pushHistory(g.base)
     if (g.mode === 'connect') {
       const drag = tempConn
       setTempConn(null)
       if (!drag) return
       if (drag.targetId) {
-        const target = docRef.current.elements.find((el) => el.id === drag.targetId)
-        const toSide = target ? nearestSide(target, drag.freeWorld) : undefined
+        // commit exactly what the preview showed
+        const toSide = drag.targetSide
         commit((d) =>
           addConnector(d, {
             id: newId(),
@@ -515,8 +687,7 @@ export default function App() {
       if (!conn) return
       const otherEnd = g.end === 'from' ? conn.to : conn.from
       if (drag.targetId && drag.targetId !== otherEnd) {
-        const target = docRef.current.elements.find((el) => el.id === drag.targetId)
-        const side = target ? nearestSide(target, drag.freeWorld) : undefined
+        const side = drag.targetSide
         commit((d) =>
           updateConnector(d, g.connectorId, {
             [g.end]: drag.targetId!,
@@ -742,18 +913,14 @@ export default function App() {
 
   /* ---------- text formatting ---------- */
 
-  function stepFontSize(dir: 1 | -1) {
+  function setFontSize(size: number) {
     commit((d) =>
       updateElements(d, selection, (el) => {
         if (el.type !== 'text' && el.type !== 'heading') return el
         const cur = effectiveFontSize(el)
-        const next =
-          dir === 1
-            ? (FONT_SIZES.find((s) => s > cur) ?? FONT_SIZES[FONT_SIZES.length - 1])
-            : ([...FONT_SIZES].reverse().find((s) => s < cur) ?? FONT_SIZES[0])
-        if (next === cur) return el
+        if (size === cur) return el
         // keep the box proportional so multi-line text stays visible
-        return { ...el, fontSize: next, h: Math.max(28, Math.round(el.h * (next / cur))) }
+        return { ...el, fontSize: size, h: Math.max(28, Math.round(el.h * (size / cur))) }
       })
     )
   }
@@ -768,22 +935,29 @@ export default function App() {
     commit((d) => updateElements(d, selection, (el) => ({ ...el, align })))
   }
 
-  function setHeadingLevel(level: number) {
-    commit((d) =>
-      updateElements(d, selection, (el) => {
-        if (el.type !== 'heading') return el
-        const cur = effectiveFontSize(el)
-        const next = HEADING_SIZES[level].size
-        return {
-          ...el,
-          level,
-          fontSize: undefined,
-          bold: undefined,
-          h: Math.max(HEADING_SIZES[level].h, Math.round(el.h * (next / cur))),
-        }
-      })
-    )
+  /* ---------- z-order (retired: stackOrder decides paint order) ----------
+
+  function bringToFront() {
+    commit((d) => ({
+      ...d,
+      elements: [
+        ...d.elements.filter((el) => !selection.has(el.id)),
+        ...d.elements.filter((el) => selection.has(el.id)),
+      ],
+    }))
   }
+
+  function sendToBack() {
+    commit((d) => ({
+      ...d,
+      elements: [
+        ...d.elements.filter((el) => selection.has(el.id)),
+        ...d.elements.filter((el) => !selection.has(el.id)),
+      ],
+    }))
+  }
+
+  ------------------------------------------------------------------------ */
 
   /* ---------- frame export ---------- */
 
@@ -884,17 +1058,21 @@ export default function App() {
     const from = elById.get(selectedConn.from)
     const to = elById.get(selectedConn.to)
     if (from && to) {
-      const geo = connectorGeometry(from, to, selectedConn.fromSide, selectedConn.toSide)
+      const geo = connectorGeometry(from, to, selectedConn.fromSide, selectedConn.toSide, selectedConn.bend ?? 0)
       const p = toScreen(geo.mid.x, geo.mid.y)
       connToolbarPos = { x: p.x, y: p.y - 18 }
     }
   }
 
-  // frames render behind everything else
-  const orderedElements = useMemo(() => {
-    const frames = doc.elements.filter((e) => e.type === 'frame')
-    const rest = doc.elements.filter((e) => e.type !== 'frame')
-    return [...frames, ...rest]
+  // Frames and shapes paint *under* the connector layer, so a connector running
+  // across a shape stays visible and its hit stroke stays clickable. Notes and
+  // media paint over it, letting connector ends tuck under them as before.
+  const [backElements, frontElements] = useMemo(() => {
+    const ordered = stackOrder(doc.elements)
+    return [
+      ordered.filter((e) => BEHIND_CONNECTORS.has(e.type)),
+      ordered.filter((e) => !BEHIND_CONNECTORS.has(e.type)),
+    ]
   }, [doc.elements])
 
   const gridSize = 24 * vp.zoom
@@ -925,54 +1103,15 @@ export default function App() {
       <div
         ref={worldRef}
         className="world"
-        style={{ transform: `translate(${vp.x}px, ${vp.y}px) scale(${vp.zoom})` }}
+        style={
+          {
+            transform: `translate(${vp.x}px, ${vp.y}px) scale(${vp.zoom})`,
+            // read by .port::after so grab targets keep a constant screen size
+            '--zoom': vp.zoom,
+          } as React.CSSProperties
+        }
       >
-        <ConnectorLayer
-          elements={doc.elements}
-          connectors={doc.connectors}
-          selectedConnector={selectedConnector}
-          temp={tempConn}
-          onSelectConnector={(id) => {
-            setSelectedConnector(id)
-            setSelection(new Set())
-          }}
-          onConnectorDoubleClick={(id) => {
-            setSelectedConnector(id)
-            setSelection(new Set())
-            setEditingConnLabel(id)
-          }}
-        />
-        {doc.connectors.map((c) => {
-          const editing = editingConnLabel === c.id
-          if (!c.label && !editing) return null
-          const from = elById.get(c.from)
-          const to = elById.get(c.to)
-          if (!from || !to) return null
-          const geo = connectorGeometry(from, to, c.fromSide, c.toSide)
-          return (
-            <ConnectorLabel
-              key={c.id}
-              connector={c}
-              x={geo.mid.x}
-              y={geo.mid.y}
-              editing={editing}
-              selected={selectedConnector === c.id}
-              onSelect={() => {
-                setSelectedConnector(c.id)
-                setSelection(new Set())
-              }}
-              onStartEdit={() => {
-                setSelectedConnector(c.id)
-                setEditingConnLabel(c.id)
-              }}
-              onCommit={(text) => {
-                setEditingConnLabel(null)
-                commit((d) => updateConnector(d, c.id, { label: text.trim() || undefined }))
-              }}
-            />
-          )
-        })}
-        {orderedElements.map((el) => (
+        {backElements.map((el) => (
           <ElementView
             key={el.id}
             el={el}
@@ -988,13 +1127,75 @@ export default function App() {
             onPortDown={handlePortDown}
           />
         ))}
+        <ConnectorLayer
+          elements={doc.elements}
+          connectors={doc.connectors}
+          selectedConnector={selectedConnector}
+          temp={tempConn}
+          onConnectorPointerDown={handleConnectorPointerDown}
+          onConnectorDoubleClick={(id) => {
+            setSelectedConnector(id)
+            setSelection(new Set())
+            setEditingConnLabel(id)
+          }}
+        />
+        {frontElements.map((el) => (
+          <ElementView
+            key={el.id}
+            el={el}
+            selected={selection.has(el.id)}
+            editing={editingId === el.id}
+            connectTarget={tempConn?.targetId === el.id && tempConn?.fixedId !== el.id}
+            zoom={vp.zoom}
+            onPointerDown={handleElementPointerDown}
+            onDoubleClick={handleElementDoubleClick}
+            onTextChange={handleTextChange}
+            onEditEnd={handleEditEnd}
+            onResizeStart={handleResizeStart}
+            onPortDown={handlePortDown}
+          />
+        ))}
+        {doc.connectors.map((c) => {
+          const editing = editingConnLabel === c.id
+          if (!c.label && !editing) return null
+          const from = elById.get(c.from)
+          const to = elById.get(c.to)
+          if (!from || !to) return null
+          const geo = connectorGeometry(from, to, c.fromSide, c.toSide, c.bend ?? 0)
+          const pos = pointAt(geo, c.labelT ?? 0.5)
+          return (
+            <ConnectorLabel
+              key={c.id}
+              connector={c}
+              x={pos.x}
+              y={pos.y}
+              editing={editing}
+              onLabelPointerDown={(e) => handleLabelPointerDown(e, c.id)}
+              selected={selectedConnector === c.id}
+              onStartEdit={() => {
+                setSelectedConnector(c.id)
+                setEditingConnLabel(c.id)
+              }}
+              onCommit={(text) => {
+                setEditingConnLabel(null)
+                commit((d) => updateConnector(d, c.id, { label: text.trim() || undefined }))
+              }}
+            />
+          )
+        })}
         {selectedConn &&
           !tempConn &&
           (() => {
             const from = elById.get(selectedConn.from)
             const to = elById.get(selectedConn.to)
             if (!from || !to) return null
-            const geo = connectorGeometry(from, to, selectedConn.fromSide, selectedConn.toSide)
+            const geo = connectorGeometry(
+              from,
+              to,
+              selectedConn.fromSide,
+              selectedConn.toSide,
+              selectedConn.bend ?? 0
+            )
             return (['from', 'to'] as const).map((end) => {
               const p = end === 'from' ? geo.start : geo.end
               return (
@@ -1083,12 +1284,9 @@ export default function App() {
           elements={selectedEls}
           onColor={setSelectionColor}
           onBorder={setSelectionBorder}
-          onFontStep={stepFontSize}
+          onFontSize={setFontSize}
           onToggleBold={toggleBold}
           onAlign={setAlign}
-          onLevel={setHeadingLevel}
-          onDuplicate={duplicateSelection}
-          onDelete={deleteSelection}
           onExportPng={() => exportFrame('png')}
           onExportPdf={() => exportFrame('pdf')}
         />
@@ -1100,8 +1298,6 @@ export default function App() {
           y={connToolbarPos.y}
           active={selectedConn.style ?? 'solid'}
           onStyle={(style) => commit((d) => updateConnector(d, selectedConn.id, { style }))}
-          onLabel={() => setEditingConnLabel(selectedConn.id)}
-          onDelete={deleteSelection}
         />
       )}
 
@@ -1193,7 +1389,7 @@ function ConnectorLabel({
   y,
   editing,
   selected,
-  onSelect,
+  onLabelPointerDown,
   onStartEdit,
   onCommit,
 }: {
@@ -1202,7 +1398,7 @@ function ConnectorLabel({
   y: number
   editing: boolean
   selected: boolean
-  onSelect: () => void
+  onLabelPointerDown: (e: React.PointerEvent) => void
   onStartEdit: () => void
   onCommit: (text: string) => void
 }) {
@@ -1229,7 +1425,7 @@ function ConnectorLabel({
       style={{ left: x, top: y }}
       onPointerDown={(e) => {
         e.stopPropagation()
-        if (!editing) onSelect()
+        if (!editing) onLabelPointerDown(e)
       }}
       onDoubleClick={(e) => {
         e.stopPropagation()

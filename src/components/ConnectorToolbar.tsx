@@ -1,5 +1,4 @@
 import React from 'react'
-import { Trash2, Type } from 'lucide-react'
 import { ConnectorStyle } from '../types'
 
 interface Props {
@@ -7,8 +6,6 @@ interface Props {
   y: number
   active: ConnectorStyle
   onStyle: (style: ConnectorStyle) => void
-  onLabel: () => void
-  onDelete: () => void
 }
 
 function StylePreview({ style }: { style: ConnectorStyle }) {
@@ -27,7 +24,7 @@ function StylePreview({ style }: { style: ConnectorStyle }) {
   )
 }
 
-export function ConnectorToolbar({ x, y, active, onStyle, onLabel, onDelete }: Props) {
+export function ConnectorToolbar({ x, y, active, onStyle }: Props) {
   const left = Math.max(110, Math.min(x, window.innerWidth - 110))
   const top = Math.max(64, y)
   return (
@@ -42,13 +39,6 @@ export function ConnectorToolbar({ x, y, active, onStyle, onLabel, onDelete }: P
           <StylePreview style={s} />
         </button>
       ))}
-      <div className="divider" />
-      <button className="tool-btn" title="Add label" onClick={onLabel}>
-        <Type size={15} />
-      </button>
-      <button className="tool-btn" title="Delete" onClick={onDelete}>
-        <Trash2 size={15} />
-      </button>
     </div>
   )
 }

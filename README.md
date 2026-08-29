@@ -20,8 +20,12 @@ Then open http://localhost:5183.
 | Boards | Top-left switcher — create, rename, switch, delete boards (each autosaves separately) |
 | Back up / restore | Boards panel → Export file (`.goya.json`) and Import file |
 | Frame an area | `/frame` — drag it by its title tab (contents move with it), export it as PNG or PDF from its toolbar |
-| Text size | Select text or a heading — stepper walks preset sizes; headings also switch H1–H4 |
-| Bold / align / font color | In the same toolbar: B, left/center/right, and a Color row |
+| Text size | Select text or a heading — pick a preset size from the dropdown |
+| Bold / align / font color | In the same toolbar: B, left/center/right, and a 🎨 row (incl. black) |
+| Resize | Drag any edge or the corner handle; hold Shift for a perfect square/circle (shapes) or locked aspect ratio (everything else) |
+| Z-order | Bring to front / send to back from the selection toolbar |
+| Curve a connector | Drag the line itself; it snaps back to straight near zero |
+| Move a connector label | Drag the label anywhere along the curve |
 | Add anything | Press `/` — filter, arrow keys, Enter |
 | Quick text | Double-click empty canvas (Esc on an empty text removes it) |
 | Edit an element | Double-click it (or select + Enter) — works on stickies and shapes too |

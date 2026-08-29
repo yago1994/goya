@@ -242,13 +242,49 @@ input {
   user-select: none;
 }
 
-/* resize handle */
-.resize-handle {
+/* resize handles */
+.resize-edge {
   position: absolute;
+  z-index: 4;
+}
+
+.resize-e {
+  right: -5px;
+  top: 12px;
+  bottom: 12px;
+  width: 10px;
+  cursor: ew-resize;
+}
+
+.resize-w {
+  left: -5px;
+  top: 12px;
+  bottom: 12px;
+  width: 10px;
+  cursor: ew-resize;
+}
+
+.resize-n {
+  top: -5px;
+  left: 12px;
+  right: 12px;
+  height: 10px;
+  cursor: ns-resize;
+}
+
+.resize-s {
+  bottom: -5px;
+  left: 12px;
+  right: 12px;
+  height: 10px;
+  cursor: ns-resize;
+}
+
+.resize-se {
   right: -7px;
   bottom: -7px;
-  width: 12px;
-  height: 12px;
+  width: 13px;
+  height: 13px;
   border-radius: 4px;
   background: #fff;
   border: 1.5px solid var(--accent);
@@ -275,6 +311,16 @@ input {
 .el.selected .port,
 .el.connect-target .port {
   opacity: 1;
+}
+
+/* Invisible pad around the dot so it can be grabbed without pixel-hunting.
+   Sized in world units that cancel the canvas zoom, so the grab area stays
+   ~8px on screen at any zoom (capped so it can't swallow small elements). */
+.port::after {
+  content: '';
+  position: absolute;
+  inset: calc(-1 * min(22px, calc(9px / var(--zoom, 1))));
+  border-radius: 50%;
 }
 
 .port:hover {
@@ -818,12 +864,27 @@ kbd {
   gap: 1px;
 }
 
-.font-size-label {
+.font-size-select {
+  font-family: inherit;
   font-size: 12.5px;
   font-weight: 600;
   color: var(--ink-soft);
-  min-width: 24px;
-  text-align: center;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #fff;
+  padding: 4px 4px;
+  margin: 2px;
+  cursor: pointer;
+  outline: none;
+}
+
+.font-size-select:hover {
+  border-color: var(--border-strong);
+  color: var(--ink);
+}
+
+.sel-toolbar .swatch-black {
+  background: #0f0f0f;
 }
 
 /* ---------- boards ---------- */

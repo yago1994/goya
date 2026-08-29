@@ -41,6 +41,27 @@ export function nearestSide(el: CanvasElement, pt: { x: number; y: number }): Si
   return best
 }
 
+/**
+ * Side of `el` a dragged connector end is deliberately aiming at: the port
+ * within `tol` (world units) of the pointer, if any. Returns undefined when
+ * the pointer is over the body rather than a port, so the caller can let the
+ * geometry pick the side that faces the other end instead of overshooting to
+ * a far-side anchor.
+ */
+export function aimedSide(el: CanvasElement, pt: { x: number; y: number }, tol: number): Side | undefined {
+  let best: Side | undefined
+  let bestDist = tol
+  for (const s of SIDES) {
+    const a = anchorAt(el, s)
+    const d = Math.hypot(a.x - pt.x, a.y - pt.y)
+    if (d < bestDist) {
+      bestDist = d
+      best = s
+    }
+  }
+  return best
+}
+
 /** Anchor on `el` nearest to a free point, for temp connectors. */
 export function nearestAnchor(el: CanvasElement, pt: { x: number; y: number }): Anchor {
   return anchorAt(el, nearestSide(el, pt))

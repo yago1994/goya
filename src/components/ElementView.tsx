@@ -2,6 +2,8 @@ import React, { useEffect, useRef } from 'react'
 import { icons } from 'lucide-react'
 import { CanvasElement, COLORS, EDITABLE_TYPES, HEADING_SIZES, Side } from '../types'
 
+export type ResizeDir = 'e' | 'w' | 'n' | 's' | 'se'
+
 interface Props {
   el: CanvasElement
   selected: boolean
@@ -12,7 +14,7 @@ interface Props {
   onDoubleClick: (e: React.MouseEvent, el: CanvasElement) => void
   onTextChange: (el: CanvasElement, text: string, height: number) => void
   onEditEnd: (el: CanvasElement, text: string) => void
-  onResizeStart: (e: React.PointerEvent, el: CanvasElement) => void
+  onResizeStart: (e: React.PointerEvent, el: CanvasElement, dir: ResizeDir) => void
   onPortDown: (e: React.PointerEvent, el: CanvasElement, side: Side) => void
 }
 
@@ -23,6 +25,34 @@ const portPos: Record<Side, React.CSSProperties> = {
   right: { top: '50%', left: '100%' },
   bottom: { top: '100%', left: '50%' },
   left: { top: '50%', left: 0 },
+}
+
+/** Edge/corner resize handles shown while selected. */
+function ResizeHandles({
+  el,
+  onResizeStart,
+}: {
+  el: CanvasElement
+  onResizeStart: (e: React.PointerEvent, el: CanvasElement, dir: ResizeDir) => void
+}) {
+  // text auto-manages its height, so only width is draggable there
+  const dirs: ResizeDir[] =
+    el.type === 'text' || el.type === 'heading' ? ['e', 'w', 'se'] : ['e', 'w', 'n', 's', 'se']
+  return (
+    <>
+      {dirs.map((dir) => (
+        <div
+          key={dir}
+          className={`resize-edge resize-${dir}`}
+          style={{ pointerEvents: 'auto' }}
+          onPointerDown={(e) => {
+            e.stopPropagation()
+            onResizeStart(e, el, dir)
+          }}
+        />
+      ))}
+    </>
+  )
 }
 
 export function defaultFontSize(el: CanvasElement): number {
@@ -144,7 +174,11 @@ export const ElementView = React.memo(function ElementView({
     case 'text':
     case 'heading': {
       const fontColor =
-        el.color && el.color !== 'none' && COLORS[el.color] ? COLORS[el.color].line : undefined
+        el.color === 'black'
+          ? '#0f0f0f'
+          : el.color && el.color !== 'none' && COLORS[el.color]
+            ? COLORS[el.color].line
+            : undefined
       content = (
         <div
           className="content"
@@ -228,16 +262,7 @@ export const ElementView = React.memo(function ElementView({
             {textBox}
           </div>
           <div className="content frame-body" />
-          {selected && (
-            <div
-              className="resize-handle"
-              style={{ pointerEvents: 'auto' }}
-              onPointerDown={(e) => {
-                e.stopPropagation()
-                onResizeStart(e, el)
-              }}
-            />
-          )}
+          {selected && <ResizeHandles el={el} onResizeStart={onResizeStart} />}
         </div>
       )
   }
@@ -262,15 +287,7 @@ export const ElementView = React.memo(function ElementView({
           }}
         />
       ))}
-      {selected && (
-        <div
-          className="resize-handle"
-          onPointerDown={(e) => {
-            e.stopPropagation()
-            onResizeStart(e, el)
-          }}
-        />
-      )}
+      {selected && <ResizeHandles el={el} onResizeStart={onResizeStart} />}
     </div>
   )
 })

@@ -9,6 +9,8 @@ export interface TempConnector {
   fixedSide?: Side
   freeWorld: { x: number; y: number }
   targetId: string | null
+  /** port on the target being aimed at; undefined = let geometry choose */
+  targetSide?: Side
   /** when re-assigning an end of an existing connector, hide that connector */
   reconnectingId?: string
   /** direction: is the free end the arrow (to) end? */
@@ -20,7 +22,7 @@ interface Props {
   connectors: Connector[]
   selectedConnector: string | null
   temp: TempConnector | null
-  onSelectConnector: (id: string) => void
+  onConnectorPointerDown: (e: React.PointerEvent, id: string) => void
   onConnectorDoubleClick: (id: string) => void
 }
 
@@ -35,7 +37,7 @@ export function ConnectorLayer({
   connectors,
   selectedConnector,
   temp,
-  onSelectConnector,
+  onConnectorPointerDown,
   onConnectorDoubleClick,
 }: Props) {
   const byId = new Map(elements.map((e) => [e.id, e]))
@@ -46,9 +48,12 @@ export function ConnectorLayer({
     if (fixed) {
       const target = temp.targetId ? byId.get(temp.targetId) : null
       if (target) {
+        // pin to the port being aimed at; otherwise leave it undefined so the
+        // curve lands on the side facing the other end. Same side the drop
+        // commits to, so the preview never lies.
         tempGeo = temp.freeIsTo
-          ? connectorGeometry(fixed, target, temp.fixedSide, undefined)
-          : connectorGeometry(target, fixed, undefined, temp.fixedSide)
+          ? connectorGeometry(fixed, target, temp.fixedSide, temp.targetSide)
+          : connectorGeometry(target, fixed, temp.targetSide, temp.fixedSide)
       } else {
         const a = temp.fixedSide ? anchorAt(fixed, temp.fixedSide) : nearestAnchor(fixed, temp.freeWorld)
         const b = { x: temp.freeWorld.x, y: temp.freeWorld.y, nx: -a.nx, ny: -a.ny }
@@ -76,16 +81,18 @@ export function ConnectorLayer({
     const from = byId.get(c.from)
     const to = byId.get(c.to)
     if (!from || !to) continue
-    const geo = connectorGeometry(from, to, c.fromSide, c.toSide)
+    const geo = connectorGeometry(from, to, c.fromSide, c.toSide, c.bend ?? 0)
     geos.push({ c, d: geo.d })
     grow(geo.start)
     grow(geo.end)
-    grow(geo.mid)
+    grow(geo.c1)
+    grow(geo.c2)
   }
   if (tempGeo) {
     grow(tempGeo.start)
     grow(tempGeo.end)
-    grow(tempGeo.mid)
+    grow(tempGeo.c1)
+    grow(tempGeo.c2)
   }
   if (geos.length === 0 && !tempGeo) return null
   const PAD = 160
@@ -122,7 +129,7 @@ export function ConnectorLayer({
               strokeWidth={14}
               onPointerDown={(e) => {
                 e.stopPropagation()
-                onSelectConnector(c.id)
+                onConnectorPointerDown(e, c.id)
               }}
               onDoubleClick={(e) => {
                 e.stopPropagation()

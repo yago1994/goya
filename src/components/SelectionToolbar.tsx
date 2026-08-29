@@ -4,15 +4,13 @@ import {
   AlignLeft,
   AlignRight,
   Bold,
-  Copy,
+  // BringToFront,
+  // SendToBack,
   FileImage,
   FileText,
-  Minus,
-  Plus,
-  Trash2,
   Ban,
 } from 'lucide-react'
-import { CanvasElement, COLORS, TextAlign } from '../types'
+import { CanvasElement, COLORS, FONT_SIZES, TextAlign } from '../types'
 import { effectiveFontSize, effectiveWeight } from './ElementView'
 
 interface Props {
@@ -21,12 +19,11 @@ interface Props {
   elements: CanvasElement[]
   onColor: (color: string) => void
   onBorder: (color: string) => void
-  onFontStep: (dir: 1 | -1) => void
+  onFontSize: (size: number) => void
   onToggleBold: () => void
   onAlign: (a: TextAlign) => void
-  onLevel: (level: number) => void
-  onDuplicate: () => void
-  onDelete: () => void
+  // onFront: () => void
+  // onBack: () => void
   onExportPng: () => void
   onExportPdf: () => void
 }
@@ -82,12 +79,11 @@ export function SelectionToolbar({
   elements,
   onColor,
   onBorder,
-  onFontStep,
+  onFontSize,
   onToggleBold,
   onAlign,
-  onLevel,
-  onDuplicate,
-  onDelete,
+  // onFront,
+  // onBack,
   onExportPng,
   onExportPdf,
 }: Props) {
@@ -101,23 +97,38 @@ export function SelectionToolbar({
   const activeBorder = single ? (single.border ?? 'none') : undefined
   const align = single?.align ?? 'left'
 
+  const fontSize = single ? effectiveFontSize(single) : 16
+  const sizeOptions = FONT_SIZES.includes(fontSize)
+    ? FONT_SIZES
+    : [...FONT_SIZES, fontSize].sort((a, b) => a - b)
+
   const rows = isText || showFill || allShapes
-  const halfWidth = isText ? 220 : rows ? (allShapes ? 210 : 175) : isFrame ? 120 : 50
+  // buttons that sit after the swatch rows
+  const tail = isFrame || (showBold && !isText)
+  const halfWidth = isText ? 200 : rows ? (allShapes ? 210 : 175) : isFrame ? 140 : 70
   const left = Math.max(halfWidth + 12, Math.min(x, window.innerWidth - halfWidth - 12))
   const top = Math.max(isText || allShapes ? 100 : 64, y)
+
+  // nothing to offer for this selection (e.g. a lone image) — skip the pill
+  if (!rows && !tail) return null
 
   return (
     <div className="sel-toolbar" style={{ left, top }} onPointerDown={(e) => e.stopPropagation()}>
       <div className="sel-rows">
         {isText && single && (
           <div className="swatch-row text-controls">
-            <button className="tool-btn" title="Smaller" onClick={() => onFontStep(-1)}>
-              <Minus size={14} />
-            </button>
-            <span className="font-size-label">{Math.round(effectiveFontSize(single))}</span>
-            <button className="tool-btn" title="Larger" onClick={() => onFontStep(1)}>
-              <Plus size={14} />
-            </button>
+            <select
+              className="font-size-select"
+              title="Font size"
+              value={fontSize}
+              onChange={(e) => onFontSize(Number(e.target.value))}
+            >
+              {sizeOptions.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
             <div className="divider" />
             <button
               className={`tool-btn${effectiveWeight(single) >= 700 ? ' active' : ''}`}
@@ -143,32 +154,35 @@ export function SelectionToolbar({
                 <Icon size={14} />
               </button>
             ))}
-            {single.type === 'heading' && (
-              <>
-                <div className="divider" />
-                {[1, 2, 3, 4].map((lv) => (
-                  <button
-                    key={lv}
-                    className={`tool-btn level-btn${(single.level ?? 1) === lv ? ' active' : ''}`}
-                    title={`Heading ${lv}`}
-                    onClick={() => onLevel(lv)}
-                  >
-                    H{lv}
-                  </button>
-                ))}
-              </>
-            )}
           </div>
         )}
         {isText && (
-          <SwatchRow
-            label="Color"
-            active={activeColor}
-            allowNone
-            noneTitle="Default"
-            onPick={onColor}
-            swatchColor={(k) => COLORS[k].line}
-          />
+          <div className="swatch-row">
+            <span className="swatch-label" title="Font color">
+              🎨
+            </span>
+            <button
+              className={`swatch swatch-black${activeColor === 'black' ? ' active' : ''}`}
+              title="Black"
+              onClick={() => onColor('black')}
+            />
+            {Object.keys(COLORS).map((key) => (
+              <button
+                key={key}
+                className={`swatch${activeColor === key ? ' active' : ''}`}
+                style={{ background: COLORS[key].line }}
+                title={COLORS[key].name}
+                onClick={() => onColor(key)}
+              />
+            ))}
+            <button
+              className={`swatch swatch-none${activeColor === 'none' || activeColor === undefined ? ' active' : ''}`}
+              title="Default"
+              onClick={() => onColor('none')}
+            >
+              <Ban size={13} />
+            </button>
+          </div>
         )}
         {showFill && (
           <SwatchRow
@@ -191,7 +205,7 @@ export function SelectionToolbar({
           />
         )}
       </div>
-      {rows && <div className="divider" />}
+      {rows && tail && <div className="divider" />}
       {isFrame && (
         <>
           <button className="tool-btn wide" title="Export frame as PNG" onClick={onExportPng}>
@@ -202,7 +216,6 @@ export function SelectionToolbar({
             <FileText size={15} />
             <span>PDF</span>
           </button>
-          <div className="divider" />
         </>
       )}
       {showBold && !isText && (
@@ -214,12 +227,19 @@ export function SelectionToolbar({
           <Bold size={14} />
         </button>
       )}
-      <button className="tool-btn" title="Duplicate (⌘D)" onClick={onDuplicate}>
-        <Copy size={15} />
-      </button>
-      <button className="tool-btn" title="Delete" onClick={onDelete}>
-        <Trash2 size={15} />
-      </button>
+      {/* z-order controls — shapes always sit behind, so these had little left
+          to do. Duplicate (⌘D) and delete (⌫) live on the keyboard.
+      {!isFrame && (
+        <>
+          <button className="tool-btn" title="Bring to front" onClick={onFront}>
+            <BringToFront size={15} />
+          </button>
+          <button className="tool-btn" title="Send to back" onClick={onBack}>
+            <SendToBack size={15} />
+          </button>
+        </>
+      )}
+      */}
     </div>
   )
 }
