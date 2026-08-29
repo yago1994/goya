@@ -13,18 +13,25 @@ import {
   CanvasElement,
   Connector,
   ConnectorStyle,
+  DEFAULT_DRAW,
+  COLORS,
   DEFAULTS,
   DocState,
+  DrawSettings,
   EDITABLE_TYPES,
   ElementType,
   FONT_SIZES,
   HEADING_SIZES,
+  PEN_COLORS,
+  PEN_SIZES,
+  PEN_STYLES,
   Side,
   TextAlign,
   Viewport,
   newId,
 } from './types'
 import { connectorGeometry, nearestSide } from './geometry'
+import { strokeElement, strokeNear, strokePath } from './drawing'
 import { fileToDataUrl } from './imageUpload'
 import { exportBoardFile, exportFramePdf, exportFramePng, parseBoardFile } from './exporting'
 import { ElementView, effectiveFontSize, effectiveWeight } from './components/ElementView'
@@ -36,10 +43,13 @@ import { EmojiPicker } from './components/EmojiPicker'
 import { ImagePicker } from './components/ImagePicker'
 import { SelectionToolbar } from './components/SelectionToolbar'
 import { ConnectorToolbar } from './components/ConnectorToolbar'
+import { DrawToolbar } from './components/DrawToolbar'
 import { ZoomControls } from './components/ZoomControls'
 
 const MIN_ZOOM = 0.12
 const MAX_ZOOM = 4
+/** eraser reach in screen px, so it stays a constant size on screen at any zoom */
+const ERASER_RADIUS = 11
 
 type Gesture =
   | { mode: 'pan'; startX: number; startY: number; vp: Viewport }
@@ -54,6 +64,9 @@ type Gesture =
   | { mode: 'marquee'; startWorld: { x: number; y: number } }
   | { mode: 'connect'; fromId: string; fromSide: Side; base: DocState }
   | { mode: 'reconnect'; connectorId: string; end: 'from' | 'to'; base: DocState }
+  /** freehand: `points` is a flat trail of world coordinates */
+  | { mode: 'draw'; points: number[] }
+  | { mode: 'erase'; base: DocState; erased: Set<string> }
 
 interface Popup {
   screenX: number
@@ -99,6 +112,9 @@ export default function App() {
   const [slash, setSlash] = useState<Popup | null>(null)
   const [picker, setPicker] = useState<(Popup & { kind: 'icon' | 'emoji' | 'image' }) | null>(null)
   const [marquee, setMarquee] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
+  const [drawing, setDrawing] = useState(false)
+  const [drawSettings, setDrawSettings] = useState<DrawSettings>(DEFAULT_DRAW)
+  const [liveStroke, setLiveStroke] = useState<number[] | null>(null)
   const [tempConn, setTempConn] = useState<TempConnector | null>(null)
   const [spaceDown, setSpaceDown] = useState(false)
   const [isPanning, setIsPanning] = useState(false)
@@ -190,11 +206,38 @@ export default function App() {
       })
   }
 
+  /* ---------- freehand drawing ---------- */
+
+  function enterDrawMode(patch?: Partial<DrawSettings>) {
+    setDrawSettings((s) => ({ ...s, eraser: false, ...patch }))
+    setDrawing(true)
+    setSelection(new Set())
+    setSelectedConnector(null)
+    setEditingId(null)
+  }
+
+  /** Remove every drawing the eraser is touching; one undo step per sweep. */
+  function eraseAt(p: { x: number; y: number }) {
+    const g = gesture.current
+    if (!g || g.mode !== 'erase') return
+    const radius = ERASER_RADIUS / vpRef.current.zoom
+    const hits = docRef.current.elements
+      .filter((el) => el.type === 'draw' && strokeNear(el, p, radius))
+      .map((el) => el.id)
+    if (hits.length === 0) return
+    hits.forEach((id) => g.erased.add(id))
+    set((d) => removeElements(d, new Set(hits)))
+  }
+
   function handleSlashAction(action: SlashAction) {
     if (!slash) return
     const { worldX, worldY, screenX, screenY } = slash
     setSlash(null)
-    if (action.kind === 'create') {
+    // anything placed on the canvas leaves drawing mode, so it can be edited
+    if (action.kind !== 'draw') setDrawing(false)
+    if (action.kind === 'draw') {
+      enterDrawMode({ pen: action.pen })
+    } else if (action.kind === 'create') {
       createElement(action.type, worldX, worldY, action.extra)
     } else if (action.kind === 'icon-picker') {
       setPicker({ kind: 'icon', screenX, screenY, worldX, worldY })
@@ -365,10 +408,21 @@ export default function App() {
       return
     }
     if (e.button !== 0) return
-    // empty canvas: start marquee selection
     rootRef.current?.setPointerCapture(e.pointerId)
     setSelection(new Set())
     setSelectedConnector(null)
+    if (drawing) {
+      const w = toWorld(e.clientX, e.clientY)
+      if (drawSettings.eraser) {
+        gesture.current = { mode: 'erase', base: docRef.current, erased: new Set() }
+        eraseAt(w)
+      } else {
+        gesture.current = { mode: 'draw', points: [w.x, w.y] }
+        setLiveStroke([w.x, w.y])
+      }
+      return
+    }
+    // empty canvas: start marquee selection
     gesture.current = { mode: 'marquee', startWorld: toWorld(e.clientX, e.clientY) }
   }
 
@@ -394,12 +448,23 @@ export default function App() {
       const w = toWorld(e.clientX, e.clientY)
       const dw = w.x - g.startWorld.x
       const dh = w.y - g.startWorld.y
+      // a stroke can legitimately be a thin sliver, so it resizes smaller than a box
+      const thin = docRef.current.elements.find((el) => el.id === g.id)?.type === 'draw'
       set((d) =>
         updateElement(d, g.id, {
-          w: Math.max(40, g.w + dw),
-          h: Math.max(28, g.h + dh),
+          w: Math.max(thin ? 8 : 40, g.w + dw),
+          h: Math.max(thin ? 8 : 28, g.h + dh),
         })
       )
+    } else if (g.mode === 'draw') {
+      const w = toWorld(e.clientX, e.clientY)
+      const n = g.points.length
+      // thin the trail out: sub-pixel samples only bloat the stored stroke
+      if (Math.hypot(w.x - g.points[n - 2], w.y - g.points[n - 1]) * vpRef.current.zoom < 1.2) return
+      g.points.push(w.x, w.y)
+      setLiveStroke(g.points.slice())
+    } else if (g.mode === 'erase') {
+      eraseAt(toWorld(e.clientX, e.clientY))
     } else if (g.mode === 'marquee') {
       const w = toWorld(e.clientX, e.clientY)
       const rect = {
@@ -464,6 +529,12 @@ export default function App() {
     if (!g) return
     if (g.mode === 'drag' && g.moved) pushHistory(g.base)
     if (g.mode === 'resize') pushHistory(g.base)
+    if (g.mode === 'draw') {
+      setLiveStroke(null)
+      const el = strokeElement(g.points, drawSettings.pen, drawSettings.color, drawSettings.size)
+      if (el) commit((d) => addElement(d, el))
+    }
+    if (g.mode === 'erase' && g.erased.size > 0) pushHistory(g.base)
     if (g.mode === 'connect') {
       const drag = tempConn
       setTempConn(null)
@@ -531,7 +602,7 @@ export default function App() {
   function handleRootDoubleClick(e: React.MouseEvent) {
     // pointer capture can retarget dblclick to the root, so hit-test the actual
     // point instead of trusting e.target
-    if (editingId) return
+    if (editingId || drawing) return
     const under = document.elementFromPoint(e.clientX, e.clientY)
     if (under?.closest('[data-element-id], .connector-label, .connector-hit, .endpoint-dot')) return
     const w = toWorld(e.clientX, e.clientY)
@@ -640,6 +711,37 @@ export default function App() {
       if (isTyping()) return
 
       const mod = e.metaKey || e.ctrlKey
+      if (!mod && !e.altKey) {
+        // pen shortcuts: P enters drawing mode from anywhere, the rest
+        // switch tools once you are in it
+        const k = e.key.toLowerCase()
+        if (k === 'p') {
+          e.preventDefault()
+          enterDrawMode({ pen: 'pen' })
+          return
+        }
+        if (drawing) {
+          if (k === 'm' || k === 'h') {
+            e.preventDefault()
+            setDrawSettings((s) => ({ ...s, pen: k === 'm' ? 'marker' : 'highlighter', eraser: false }))
+            return
+          }
+          if (k === 'e') {
+            e.preventDefault()
+            setDrawSettings((s) => ({ ...s, eraser: true }))
+            return
+          }
+          if (e.key === '[' || e.key === ']') {
+            e.preventDefault()
+            setDrawSettings((s) => {
+              const i = PEN_SIZES.indexOf(s.size)
+              const next = Math.min(PEN_SIZES.length - 1, Math.max(0, (i < 0 ? 1 : i) + (e.key === ']' ? 1 : -1)))
+              return { ...s, size: PEN_SIZES[next], eraser: false }
+            })
+            return
+          }
+        }
+      }
       if (e.key === '/' && !mod) {
         e.preventDefault()
         const { x, y } = mouse.current
@@ -680,6 +782,7 @@ export default function App() {
         setSelectedConnector(null)
         setSlash(null)
         setPicker(null)
+        setDrawing(false)
         return
       }
       if (e.key === 'Enter' && selection.size === 1) {
@@ -700,7 +803,7 @@ export default function App() {
       window.removeEventListener('keyup', onKeyUp)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selection, selectedConnector, undo, redo])
+  }, [selection, selectedConnector, drawing, undo, redo])
 
   /* ---------- selection ops ---------- */
 
@@ -733,7 +836,14 @@ export default function App() {
   }
 
   function setSelectionColor(color: string) {
-    commit((d) => updateElements(d, selection, (el) => ({ ...el, color })))
+    commit((d) =>
+      updateElements(d, selection, (el) => {
+        // ink and fill are separate palettes: in a mixed selection, a key from
+        // one of them must not land on an element that reads the other
+        const known = el.type === 'draw' ? !!PEN_COLORS[color] : color === 'none' || !!COLORS[color]
+        return known ? { ...el, color } : el
+      })
+    )
   }
 
   function setSelectionBorder(border: string) {
@@ -902,7 +1012,13 @@ export default function App() {
   return (
     <div
       ref={rootRef}
-      className={`canvas-root${isPanning ? ' panning' : ''}${spaceDown ? ' space-pan' : ''}`}
+      className={
+        'canvas-root' +
+        (isPanning ? ' panning' : '') +
+        (spaceDown ? ' space-pan' : '') +
+        (drawing ? ' draw-mode' : '') +
+        (drawing && !spaceDown ? (drawSettings.eraser ? ' erasing' : ' drawing') : '')
+      }
       onPointerDown={handleRootPointerDown}
       onPointerMove={handleRootPointerMove}
       onPointerUp={handleRootPointerUp}
@@ -1011,6 +1127,25 @@ export default function App() {
               )
             })
           })()}
+        {liveStroke && (() => {
+          const style = PEN_STYLES[drawSettings.pen]
+          const ink = PEN_COLORS[drawSettings.color] ?? PEN_COLORS.ink
+          return (
+            <svg className="live-stroke" width={1} height={1}>
+              <path
+                // the trail is already in world coordinates, so it needs no scaling
+                d={strokePath(liveStroke, 1, 1)}
+                fill="none"
+                stroke={ink.stroke}
+                strokeWidth={drawSettings.size * style.width}
+                strokeLinecap={style.cap}
+                strokeLinejoin="round"
+                opacity={style.opacity}
+                style={{ mixBlendMode: style.blend }}
+              />
+            </svg>
+          )
+        })()}
         {marquee && (
           <div
             className="marquee"
@@ -1034,7 +1169,15 @@ export default function App() {
           <span className="chevron">▾</span>
         </button>
         <div className="hint-pill">
-          Press <kbd>/</kbd> to add
+          {drawing ? (
+            <>
+              Drawing — drag to sketch, <kbd>esc</kbd> to stop
+            </>
+          ) : (
+            <>
+              Press <kbd>/</kbd> to add
+            </>
+          )}
         </div>
       </div>
 
@@ -1067,12 +1210,14 @@ export default function App() {
         />
       )}
 
-      {doc.elements.length === 0 && !slash && !picker && !boardsOpen && (
+      {doc.elements.length === 0 && !slash && !picker && !boardsOpen && !drawing && (
         <div className="empty-state">
           <div className="big">
             Press <kbd>/</kbd> anywhere to add a sticky note, text, emoji, icon, or image
           </div>
-          <div>Double-click for text · drag from a note’s edge to branch out</div>
+          <div>
+            Double-click for text · <kbd>P</kbd> to draw · drag from a note’s edge to branch out
+          </div>
         </div>
       )}
 
@@ -1173,6 +1318,14 @@ export default function App() {
           e.currentTarget.value = ''
         }}
       />
+
+      {drawing && (
+        <DrawToolbar
+          settings={drawSettings}
+          onChange={(patch) => setDrawSettings((s) => ({ ...s, ...patch }))}
+          onDone={() => setDrawing(false)}
+        />
+      )}
 
       <ZoomControls
         zoom={vp.zoom}

@@ -14,8 +14,10 @@ import {
   Circle,
   Frame,
   Search,
+  Pen,
+  Highlighter,
 } from 'lucide-react'
-import { CanvasElement, ElementType } from '../types'
+import { CanvasElement, ElementType, PenTool } from '../types'
 
 export type SlashAction =
   | { kind: 'create'; type: ElementType; extra?: Partial<CanvasElement> }
@@ -23,6 +25,7 @@ export type SlashAction =
   | { kind: 'emoji-picker' }
   | { kind: 'image-picker' }
   | { kind: 'upload-image' }
+  | { kind: 'draw'; pen: PenTool }
 
 export interface SlashItem {
   id: string
@@ -124,6 +127,24 @@ const ITEMS: SlashItem[] = [
     section: 'Media',
     icon: <Upload size={17} />,
     action: { kind: 'upload-image' },
+  },
+  {
+    id: 'draw',
+    label: 'Drawing',
+    desc: 'Freehand pen — sketch anywhere on the canvas',
+    keywords: 'draw drawing pen ink sketch scribble doodle freehand write marker annotate',
+    section: 'Draw',
+    icon: <Pen size={17} />,
+    action: { kind: 'draw', pen: 'pen' },
+  },
+  {
+    id: 'highlighter',
+    label: 'Highlighter',
+    desc: 'Translucent ink for marking things up',
+    keywords: 'highlighter highlight marker draw ink annotate emphasize',
+    section: 'Draw',
+    icon: <Highlighter size={17} />,
+    action: { kind: 'draw', pen: 'highlighter' },
   },
   {
     id: 'rect',

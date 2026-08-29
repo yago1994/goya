@@ -12,7 +12,7 @@ import {
   Trash2,
   Ban,
 } from 'lucide-react'
-import { CanvasElement, COLORS, TextAlign } from '../types'
+import { CanvasElement, COLORS, PEN_COLORS, TextAlign } from '../types'
 import { effectiveFontSize, effectiveWeight } from './ElementView'
 
 interface Props {
@@ -43,6 +43,8 @@ function SwatchRow({
   noneTitle,
   onPick,
   swatchColor,
+  keys = Object.keys(COLORS),
+  names = (key: string) => COLORS[key].name,
 }: {
   label: string | null
   active: string | undefined
@@ -50,16 +52,18 @@ function SwatchRow({
   noneTitle: string
   onPick: (key: string) => void
   swatchColor: (key: string) => string
+  keys?: string[]
+  names?: (key: string) => string
 }) {
   return (
     <div className="swatch-row">
       {label && <span className="swatch-label">{label}</span>}
-      {Object.keys(COLORS).map((key) => (
+      {keys.map((key) => (
         <button
           key={key}
           className={`swatch${active === key ? ' active' : ''}`}
           style={{ background: swatchColor(key) }}
-          title={COLORS[key].name}
+          title={names(key)}
           onClick={() => onPick(key)}
         />
       ))}
@@ -96,12 +100,13 @@ export function SelectionToolbar({
   const isText = !!single && TEXTLIKE.has(single.type)
   const showFill = !isText && elements.some((e) => FILL_COLORABLE.has(e.type))
   const allShapes = elements.length > 0 && elements.every((e) => SHAPES.has(e.type))
+  const allDraw = elements.length > 0 && elements.every((e) => e.type === 'draw')
   const showBold = !!single && BOLDABLE.has(single.type)
   const activeColor = single?.color
   const activeBorder = single ? (single.border ?? 'none') : undefined
   const align = single?.align ?? 'left'
 
-  const rows = isText || showFill || allShapes
+  const rows = isText || showFill || allShapes || allDraw
   const halfWidth = isText ? 220 : rows ? (allShapes ? 210 : 175) : isFrame ? 120 : 50
   const left = Math.max(halfWidth + 12, Math.min(x, window.innerWidth - halfWidth - 12))
   const top = Math.max(isText || allShapes ? 100 : 64, y)
@@ -178,6 +183,18 @@ export function SelectionToolbar({
             noneTitle="No fill"
             onPick={onColor}
             swatchColor={(k) => COLORS[k].fill}
+          />
+        )}
+        {allDraw && (
+          <SwatchRow
+            label="Ink"
+            active={activeColor ?? 'ink'}
+            allowNone={false}
+            noneTitle=""
+            onPick={onColor}
+            keys={Object.keys(PEN_COLORS)}
+            names={(k) => PEN_COLORS[k].name}
+            swatchColor={(k) => PEN_COLORS[k].stroke}
           />
         )}
         {allShapes && (

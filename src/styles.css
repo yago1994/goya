@@ -287,6 +287,146 @@ input {
   outline-offset: 2px;
 }
 
+/* ---------- freehand drawings ---------- */
+
+/*
+ * A diagonal stroke's box is mostly empty air, so the box itself is inert and
+ * only the ink (plus its handles) takes pointer events. :hover still reaches
+ * the container, so the ports behave like every other element's.
+ */
+.el-draw {
+  pointer-events: none;
+}
+
+.el-draw .draw-hit,
+.el-draw .port,
+.el-draw .resize-handle {
+  pointer-events: auto;
+}
+
+.el-draw .draw-hit {
+  cursor: pointer;
+}
+
+.el-draw svg {
+  display: block;
+}
+
+/* the stroke in progress, drawn straight in world coordinates */
+.live-stroke {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 25;
+}
+
+/* ---------- draw mode ---------- */
+
+.canvas-root.draw-mode .world {
+  pointer-events: none;
+}
+
+.canvas-root.drawing {
+  cursor: crosshair;
+}
+
+.canvas-root.erasing {
+  cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24'><circle cx='12' cy='12' r='9' fill='rgba(255,255,255,0.65)' stroke='rgb(55,53,47)' stroke-width='1.5'/></svg>")
+      12 12,
+    crosshair;
+}
+
+.draw-toolbar {
+  position: fixed;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md);
+  padding: 5px;
+  animation: fade-in 0.1s ease;
+  max-width: calc(100vw - 32px);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.draw-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.draw-toolbar .tool-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-soft);
+}
+
+.draw-toolbar .tool-btn:hover {
+  background: rgba(55, 53, 47, 0.06);
+  color: var(--ink);
+}
+
+.draw-toolbar .tool-btn.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.draw-toolbar .divider {
+  width: 1px;
+  height: 22px;
+  background: var(--border);
+  margin: 0 5px;
+}
+
+.size-dot {
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.pen-swatch {
+  width: 22px;
+  height: 22px;
+  margin: 2px;
+  border-radius: 50%;
+  border: 1px solid rgba(55, 53, 47, 0.12);
+  flex-shrink: 0;
+}
+
+.pen-swatch.active {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.draw-done {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+.draw-done:hover {
+  background: rgba(55, 53, 47, 0.06);
+  color: var(--ink);
+}
+
 /* ---------- connectors ---------- */
 
 .connector-svg {

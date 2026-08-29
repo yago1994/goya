@@ -123,7 +123,13 @@ export function useDoc() {
     setDoc((d) => fn(d))
   }, [])
 
+  /**
+   * StrictMode invokes state updaters twice in development, so recording
+   * history has to be idempotent — the same base landing on the stack twice
+   * would make every undo step fire twice.
+   */
   const push = (base: DocState) => {
+    if (undoStack.current[undoStack.current.length - 1] === base) return
     undoStack.current.push(base)
     if (undoStack.current.length > 200) undoStack.current.shift()
     redoStack.current = []
@@ -142,22 +148,19 @@ export function useDoc() {
     if (base !== docRef.current) push(base)
   }, [])
 
+  // popping happens outside the updater — see the note on `push`
   const undo = useCallback(() => {
-    setDoc((d) => {
-      const prev = undoStack.current.pop()
-      if (!prev) return d
-      redoStack.current.push(d)
-      return prev
-    })
+    const prev = undoStack.current.pop()
+    if (!prev) return
+    redoStack.current.push(docRef.current)
+    setDoc(prev)
   }, [])
 
   const redo = useCallback(() => {
-    setDoc((d) => {
-      const next = redoStack.current.pop()
-      if (!next) return d
-      undoStack.current.push(d)
-      return next
-    })
+    const next = redoStack.current.pop()
+    if (!next) return
+    undoStack.current.push(docRef.current)
+    setDoc(next)
   }, [])
 
   /* ---------- boards ---------- */
