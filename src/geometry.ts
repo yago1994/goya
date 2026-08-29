@@ -85,59 +85,111 @@ function bestAnchors(a: CanvasElement, b: CanvasElement): [Anchor, Anchor] {
   return best
 }
 
+export interface Point {
+  x: number
+  y: number
+}
+
+/** One cubic bezier: [start, control 1, control 2, end]. */
+type Seg = [Point, Point, Point, Point]
+
 export interface CurveGeometry {
   d: string
-  start: { x: number; y: number }
-  end: { x: number; y: number }
-  mid: { x: number; y: number }
-  /** cubic bezier control points (after bend) */
-  c1: { x: number; y: number }
-  c2: { x: number; y: number }
+  start: Point
+  end: Point
+  mid: Point
+  /** endpoints + control points, for bounding the path */
+  points: Point[]
   /** unit perpendicular of the straight start→end line (bend direction) */
-  normal: { x: number; y: number }
+  normal: Point
+  /** cubic segments the path is built from */
+  segs: Seg[]
 }
 
-export function curve(p: Anchor, q: Anchor, bend = 0): CurveGeometry {
-  const dist = Math.hypot(q.x - p.x, q.y - p.y)
-  const k = Math.min(120, Math.max(30, dist * 0.4))
-  // unit perpendicular of the chord, used to bow the curve
-  const len = Math.max(1e-6, dist)
-  const nx = -(q.y - p.y) / len
-  const ny = (q.x - p.x) / len
-  const c1x = p.x + p.nx * k + nx * bend
-  const c1y = p.y + p.ny * k + ny * bend
-  const c2x = q.x + q.nx * k + nx * bend
-  const c2y = q.y + q.ny * k + ny * bend
-  return {
-    d: `M ${p.x} ${p.y} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${q.x} ${q.y}`,
-    start: { x: p.x, y: p.y },
-    end: { x: q.x, y: q.y },
-    c1: { x: c1x, y: c1y },
-    c2: { x: c2x, y: c2y },
-    normal: { x: nx, y: ny },
-    // cubic bezier at t = 0.5
-    mid: {
-      x: (p.x + 3 * c1x + 3 * c2x + q.x) / 8,
-      y: (p.y + 3 * c1y + 3 * c2y + q.y) / 8,
-    },
-  }
-}
-
-/** Point on the curve at parameter t (0..1). */
-export function pointAt(geo: CurveGeometry, t: number): { x: number; y: number } {
+function evalSeg(s: Seg, t: number): Point {
   const u = 1 - t
   const a = u * u * u
   const b = 3 * u * u * t
   const c = 3 * u * t * t
   const d = t * t * t
   return {
-    x: a * geo.start.x + b * geo.c1.x + c * geo.c2.x + d * geo.end.x,
-    y: a * geo.start.y + b * geo.c1.y + c * geo.c2.y + d * geo.end.y,
+    x: a * s[0].x + b * s[1].x + c * s[2].x + d * s[3].x,
+    y: a * s[0].y + b * s[1].y + c * s[2].y + d * s[3].y,
   }
 }
 
+export function curve(p: Anchor, q: Anchor, bend = 0): CurveGeometry {
+  const dist = Math.hypot(q.x - p.x, q.y - p.y)
+  const len = Math.max(1e-6, dist)
+  // unit perpendicular of the chord, used to bow the curve
+  const nx = -(q.y - p.y) / len
+  const ny = (q.x - p.x) / len
+
+  let segs: Seg[]
+  if (!bend) {
+    const k = Math.min(120, Math.max(30, dist * 0.4))
+    segs = [
+      [
+        { x: p.x, y: p.y },
+        { x: p.x + p.nx * k, y: p.y + p.ny * k },
+        { x: q.x + q.nx * k, y: q.y + q.ny * k },
+        { x: q.x, y: q.y },
+      ],
+    ]
+  } else {
+    // Bow the middle without tilting the ends. Offsetting both control points
+    // sideways (the old way) rotated the tangent at each anchor, so a bent
+    // connector met the element — and drew its arrowhead — at a slant. Instead
+    // the handles at each anchor stay on that side's normal, and the bend is
+    // carried by an apex in the middle whose handles run along the chord.
+    const apex = { x: (p.x + q.x) / 2 + nx * bend, y: (p.y + q.y) / 2 + ny * bend }
+    const ux = (q.x - p.x) / len
+    const uy = (q.y - p.y) / len
+    const k = Math.min(90, Math.max(24, dist * 0.28))
+    const h = Math.max(20, dist * 0.22)
+    segs = [
+      [
+        { x: p.x, y: p.y },
+        { x: p.x + p.nx * k, y: p.y + p.ny * k },
+        { x: apex.x - ux * h, y: apex.y - uy * h },
+        apex,
+      ],
+      [
+        apex,
+        { x: apex.x + ux * h, y: apex.y + uy * h },
+        { x: q.x + q.nx * k, y: q.y + q.ny * k },
+        { x: q.x, y: q.y },
+      ],
+    ]
+  }
+
+  const d = segs
+    .map(
+      (s, i) =>
+        `${i === 0 ? `M ${s[0].x} ${s[0].y} ` : ''}C ${s[1].x} ${s[1].y}, ${s[2].x} ${s[2].y}, ${s[3].x} ${s[3].y}`
+    )
+    .join(' ')
+
+  return {
+    d,
+    start: { x: p.x, y: p.y },
+    end: { x: q.x, y: q.y },
+    points: segs.flat(),
+    normal: { x: nx, y: ny },
+    segs,
+    mid: segs.length === 1 ? evalSeg(segs[0], 0.5) : segs[0][3],
+  }
+}
+
+/** Point on the curve at parameter t (0..1), split evenly across segments. */
+export function pointAt(geo: CurveGeometry, t: number): Point {
+  const n = geo.segs.length
+  const i = Math.min(n - 1, Math.max(0, Math.floor(t * n)))
+  return evalSeg(geo.segs[i], t * n - i)
+}
+
 /** Parameter t of the curve point nearest to `pt` (sampled). */
-export function nearestT(geo: CurveGeometry, pt: { x: number; y: number }): number {
+export function nearestT(geo: CurveGeometry, pt: Point): number {
   let best = 0.5
   let bestDist = Infinity
   for (let i = 0; i <= 100; i++) {

@@ -42,6 +42,11 @@ const MAX_ZOOM = 4
 const CONNECT_SNAP_PX = 48
 /** How close (screen px) the pointer must be to a port to pin the connector to it. */
 const PORT_AIM_PX = 44
+/** Wheel feel: zoom per pixel of scroll, and how much of a scroll becomes pan. */
+const ZOOM_SPEED = 0.004
+const PAN_SPEED = 0.55
+/** Biggest zoom change a single wheel event may make. */
+const MAX_ZOOM_STEP = 40
 
 type Gesture =
   | { mode: 'pan'; startX: number; startY: number; vp: Viewport }
@@ -64,7 +69,15 @@ type Gesture =
       base: DocState
     }
   | { mode: 'marquee'; startWorld: { x: number; y: number } }
-  | { mode: 'connect'; fromId: string; fromSide: Side; base: DocState }
+  | {
+      mode: 'connect'
+      fromId: string
+      fromSide: Side
+      startX: number
+      startY: number
+      moved: boolean
+      base: DocState
+    }
   | { mode: 'reconnect'; connectorId: string; end: 'from' | 'to'; base: DocState }
   | { mode: 'bend'; connectorId: string; startX: number; startY: number; moved: boolean; base: DocState }
   | { mode: 'dragLabel'; connectorId: string; startX: number; startY: number; moved: boolean; base: DocState }
@@ -416,7 +429,15 @@ export default function App() {
   function handlePortDown(e: React.PointerEvent, el: CanvasElement, side: Side) {
     if (e.button !== 0) return
     capturePointer(e)
-    gesture.current = { mode: 'connect', fromId: el.id, fromSide: side, base: docRef.current }
+    gesture.current = {
+      mode: 'connect',
+      fromId: el.id,
+      fromSide: side,
+      startX: e.clientX,
+      startY: e.clientY,
+      moved: false,
+      base: docRef.current,
+    }
     setTempConn({
       fixedId: el.id,
       fixedSide: side,
@@ -466,6 +487,18 @@ export default function App() {
       }
     }
     return best
+  }
+
+  /** Elements (frames aside — they're backdrops) covering a world point. */
+  function overElement(pt: { x: number; y: number }): boolean {
+    return docRef.current.elements.some(
+      (el) =>
+        el.type !== 'frame' &&
+        pt.x >= el.x &&
+        pt.x <= el.x + el.w &&
+        pt.y >= el.y &&
+        pt.y <= el.y + el.h
+    )
   }
 
   /** Port on `targetId` the pointer is aiming at, if any (see aimedSide). */
@@ -552,9 +585,9 @@ export default function App() {
       if (!from || !to) return
       const w = toWorld(e.clientX, e.clientY)
       const geo0 = connectorGeometry(from, to, conn.fromSide, conn.toSide, 0)
-      // shifting both control points by k·n moves the curve midpoint by 0.75·k
-      let bend =
-        ((w.x - geo0.mid.x) * geo0.normal.x + (w.y - geo0.mid.y) * geo0.normal.y) / 0.75
+      // the bent curve's apex sits exactly `bend` off the chord, so the
+      // perpendicular distance the pointer has travelled is the bend
+      let bend = (w.x - geo0.mid.x) * geo0.normal.x + (w.y - geo0.mid.y) * geo0.normal.y
       if (Math.abs(bend) < 12) bend = 0 // snap back to straight
       set((d) => updateConnector(d, g.connectorId, { bend }))
     } else if (g.mode === 'dragLabel') {
@@ -599,6 +632,7 @@ export default function App() {
       }
       setSelection(hit)
     } else if (g.mode === 'connect') {
+      if (!g.moved && Math.hypot(e.clientX - g.startX, e.clientY - g.startY) >= 4) g.moved = true
       const targetId = connectTargetAt(e, g.fromId)
       setTempConn({
         fixedId: g.fromId,
@@ -652,8 +686,10 @@ export default function App() {
             toSide,
           })
         )
-      } else {
-        // dropped on empty canvas — spawn a connected sticky (mind-map flow)
+      } else if (g.moved && !overElement(drag.freeWorld)) {
+        // dropped on empty canvas — spawn a connected sticky (mind-map flow).
+        // A click on a port, or a drop landing on top of an element, is not
+        // that: it would bury a new note under whatever is already there.
         const source = docRef.current.elements.find((el) => el.id === g.fromId)
         const d = DEFAULTS.sticky
         const el: CanvasElement = {
@@ -718,8 +754,14 @@ export default function App() {
       // let overlays (slash menu, pickers, toolbars) scroll natively
       if ((e.target as HTMLElement).closest?.('.slash-menu, .picker, .sel-toolbar')) return
       e.preventDefault()
+      // wheels report lines or pages on some devices — normalise to pixels
+      const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1
+      const dx = e.deltaX * unit
+      const dy = e.deltaY * unit
       if (e.ctrlKey || e.metaKey) {
-        const factor = Math.exp(-e.deltaY * 0.012)
+        // clamp per event so one hard flick can't jump several zoom steps
+        const step = Math.max(-MAX_ZOOM_STEP, Math.min(MAX_ZOOM_STEP, dy))
+        const factor = Math.exp(-step * ZOOM_SPEED)
         setVp((v) => {
           const zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, v.zoom * factor))
           const k = zoom / v.zoom
@@ -730,7 +772,7 @@ export default function App() {
           }
         })
       } else {
-        setVp((v) => ({ ...v, x: v.x - e.deltaX, y: v.y - e.deltaY }))
+        setVp((v) => ({ ...v, x: v.x - dx * PAN_SPEED, y: v.y - dy * PAN_SPEED }))
       }
     }
     node.addEventListener('wheel', onWheel, { passive: false })

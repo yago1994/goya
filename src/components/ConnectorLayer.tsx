@@ -83,17 +83,9 @@ export function ConnectorLayer({
     if (!from || !to) continue
     const geo = connectorGeometry(from, to, c.fromSide, c.toSide, c.bend ?? 0)
     geos.push({ c, d: geo.d })
-    grow(geo.start)
-    grow(geo.end)
-    grow(geo.c1)
-    grow(geo.c2)
+    geo.points.forEach(grow)
   }
-  if (tempGeo) {
-    grow(tempGeo.start)
-    grow(tempGeo.end)
-    grow(tempGeo.c1)
-    grow(tempGeo.c2)
-  }
+  if (tempGeo) tempGeo.points.forEach(grow)
   if (geos.length === 0 && !tempGeo) return null
   const PAD = 160
   const bx = minX - PAD
