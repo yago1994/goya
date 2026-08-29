@@ -8,8 +8,11 @@ export type ElementType =
   | 'rect'
   | 'ellipse'
   | 'frame'
+  | 'draw'
 
 export type TextAlign = 'left' | 'center' | 'right'
+
+export type PenTool = 'pen' | 'marker' | 'highlighter'
 
 export interface CanvasElement {
   id: string
@@ -37,6 +40,15 @@ export interface CanvasElement {
   url?: string
   /** attribution string for images */
   credit?: string
+  /** freehand stroke: flat [x0,y0,x1,y1,…] normalized to 0–1 inside the element box */
+  points?: number[]
+  /**
+   * freehand stroke weight, stored as a fraction of the box diagonal — so a
+   * drawing keeps its proportions when it is resized
+   */
+  strokeWidth?: number
+  /** which pen drew a freehand stroke */
+  pen?: PenTool
 }
 
 export type Side = 'top' | 'right' | 'bottom' | 'left'
@@ -90,6 +102,42 @@ export const COLORS: Record<string, { fill: string; text: string; line: string; 
   gray: { fill: '#EFEFED', text: '#3F3F3C', line: '#96948F', name: 'Gray' },
 }
 
+/**
+ * Freehand ink palette. Kept apart from COLORS: strokes want saturated,
+ * pen-like colors, where COLORS is tuned for pastel sticky fills.
+ */
+export const PEN_COLORS: Record<string, { stroke: string; name: string }> = {
+  ink: { stroke: '#37352F', name: 'Ink' },
+  red: { stroke: '#E03E3E', name: 'Red' },
+  orange: { stroke: '#E8850C', name: 'Orange' },
+  yellow: { stroke: '#DFAB01', name: 'Yellow' },
+  green: { stroke: '#3D9A50', name: 'Green' },
+  blue: { stroke: '#2F6FED', name: 'Blue' },
+  purple: { stroke: '#8B46D6', name: 'Purple' },
+  pink: { stroke: '#D6479B', name: 'Pink' },
+}
+
+export const PEN_STYLES: Record<
+  PenTool,
+  { name: string; width: number; opacity: number; cap: 'round' | 'butt'; blend?: 'multiply' }
+> = {
+  pen: { name: 'Pen', width: 1, opacity: 1, cap: 'round' },
+  marker: { name: 'Marker', width: 2.6, opacity: 1, cap: 'round' },
+  highlighter: { name: 'Highlighter', width: 5, opacity: 0.36, cap: 'butt', blend: 'multiply' },
+}
+
+/** base stroke widths in world px, scaled by the pen's own width factor */
+export const PEN_SIZES = [2, 4, 7]
+
+export interface DrawSettings {
+  pen: PenTool
+  color: string
+  size: number
+  eraser: boolean
+}
+
+export const DEFAULT_DRAW: DrawSettings = { pen: 'pen', color: 'ink', size: PEN_SIZES[1], eraser: false }
+
 export const HEADING_SIZES: Record<number, { size: number; weight: number; h: number }> = {
   1: { size: 68, weight: 700, h: 100 },
   2: { size: 48, weight: 700, h: 74 },
@@ -110,6 +158,7 @@ export const DEFAULTS: Record<ElementType, { w: number; h: number }> = {
   rect: { w: 220, h: 130 },
   ellipse: { w: 200, h: 140 },
   frame: { w: 720, h: 480 },
+  draw: { w: 200, h: 200 }, // unused: a stroke sizes itself to its own bounds
 }
 
 export const EDITABLE_TYPES = ['sticky', 'text', 'heading', 'rect', 'ellipse']

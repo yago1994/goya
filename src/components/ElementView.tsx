@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react'
 import { icons } from 'lucide-react'
-import { CanvasElement, COLORS, EDITABLE_TYPES, HEADING_SIZES, Side } from '../types'
+import { CanvasElement, COLORS, EDITABLE_TYPES, HEADING_SIZES, PEN_COLORS, PEN_STYLES, Side } from '../types'
+import { strokePath, strokeWidthOf } from '../drawing'
 
 export type ResizeDir = 'e' | 'w' | 'n' | 's' | 'se'
 
@@ -122,6 +123,10 @@ export const ElementView = React.memo(function ElementView({
     top: el.y,
     width: el.w,
     height: el.h,
+    // Grab pad around each port (see .port::after). Divided by the zoom so it
+    // stays ~9px on screen, and capped by the element's own size so the ports
+    // of something small — a thin freehand stroke — can't blanket its body.
+    ['--port-pad' as string]: `${Math.min(9 / zoom, el.w / 4, el.h / 4)}px`,
   }
 
   let content: React.ReactNode = null
@@ -245,6 +250,43 @@ export const ElementView = React.memo(function ElementView({
         </div>
       )
       break
+    case 'draw': {
+      const ink = PEN_COLORS[el.color ?? 'ink'] ?? PEN_COLORS.ink
+      const style = PEN_STYLES[el.pen ?? 'pen']
+      const width = strokeWidthOf(el)
+      const d = strokePath(el.points ?? [], el.w, el.h)
+      // The box is mostly empty space for a diagonal stroke, so only the ink
+      // itself is clickable (see .el-draw in the stylesheet) — a fatter
+      // transparent copy of the path gives it a comfortable hit area.
+      content = (
+        <div className="content">
+          <svg
+            width={el.w}
+            height={el.h}
+            viewBox={`0 0 ${el.w} ${el.h}`}
+            style={{ overflow: 'visible', mixBlendMode: style.blend }}
+          >
+            <path
+              className="draw-hit"
+              d={d}
+              fill="none"
+              stroke="transparent"
+              strokeWidth={Math.max(width, Math.min(12 / zoom, 40))}
+            />
+            <path
+              d={d}
+              fill="none"
+              stroke={ink.stroke}
+              strokeWidth={width}
+              strokeLinecap={style.cap}
+              strokeLinejoin="round"
+              opacity={style.opacity}
+            />
+          </svg>
+        </div>
+      )
+      break
+    }
     case 'frame':
       // The frame body ignores pointer events so you can work inside it;
       // select and drag it by its title tab.

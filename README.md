@@ -27,6 +27,10 @@ Then open http://localhost:5183.
 | Curve a connector | Drag the line itself; it snaps back to straight near zero |
 | Move a connector label | Drag the label anywhere along the curve |
 | Add anything | Press `/` — filter, arrow keys, Enter |
+| Draw freehand | `/draw` or `P` — drag to sketch; the bottom toolbar holds pen / marker / highlighter, eraser, three stroke weights and the ink palette |
+| While drawing | `P` pen · `M` marker · `H` highlighter · `E` eraser · `[` `]` stroke weight · `Esc` (or Done) to stop |
+| Erase | Eraser tool — drag across strokes; each sweep is one undo step |
+| Recolor a stroke | Select it — the Ink row in its toolbar; strokes also move, resize, duplicate and connect like any other element |
 | Quick text | Double-click empty canvas (Esc on an empty text removes it) |
 | Edit an element | Double-click it (or select + Enter) — works on stickies and shapes too |
 | Branch a mind-map | Drag from a note's edge port to empty canvas — spawns a connected sticky |
@@ -48,6 +52,7 @@ Then open http://localhost:5183.
 
 - **Basics** — Sticky note, Text, Heading 1–4
 - **Media** — Icon (searchable, 1,500+ Lucide icons), Emoji (full searchable emoji picker), Image from web (keyless search via Openverse with Wikimedia Commons fallback; openly licensed results), Upload image (downscaled client-side so autosave stays within localStorage limits)
+- **Draw** — Drawing (freehand pen), Highlighter
 - **Shapes** — Rectangle, Ellipse, Frame
 
 ## Architecture
@@ -57,6 +62,7 @@ Vite + React + TypeScript, no state library.
 - `src/App.tsx` — canvas orchestration: pan/zoom viewport, pointer gestures (drag, resize, marquee, connect/reconnect), keyboard shortcuts, clipboard
 - `src/state.ts` — multi-board store with snapshot undo/redo, localStorage autosave, and doc-format migrations
 - `src/geometry.ts` — connector routing (side-pinned or nearest-anchor bezier curves)
+- `src/drawing.ts` — freehand strokes: pointer trail → smoothed SVG path, and the eraser's ink hit-test. Every stroke is its own element, with its points normalized inside its own bounding box (and its weight stored relative to the box diagonal), so it moves, resizes and exports like everything else
 - `src/exporting.ts` — frame → PNG/PDF (html-to-image `toSvg` + manual rasterization; `toPng`'s `img.decode()` stalls on foreignObject SVGs in Chromium) and board file export/import
 - `src/components/` — element renderers, connector layer, slash menu, icon/emoji/image pickers, selection + connector toolbars, boards panel
 - `src/imageSearch.ts` — web image search (Openverse → Wikimedia fallback)
