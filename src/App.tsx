@@ -34,6 +34,9 @@ import { aimedSide, connectorGeometry, nearestT, pointAt } from './geometry'
 import { strokeElement, strokeNear, strokePath } from './drawing'
 import { fileToDataUrl } from './imageUpload'
 import { exportBoardFile, exportFramePdf, exportFramePng, parseBoardFile } from './exporting'
+import { copyBoardSvg, exportBoardSvgFile } from './svgExport'
+import { exportBoardDrawio } from './drawioExport'
+import { exportBoardVsdx } from './vsdxExport'
 import { ElementView, ResizeDir, effectiveFontSize, effectiveWeight } from './components/ElementView'
 import { BoardsPanel } from './components/BoardsPanel'
 import { ConnectorLayer, TempConnector } from './components/ConnectorLayer'
@@ -1120,6 +1123,71 @@ export default function App() {
 
   ------------------------------------------------------------------------ */
 
+  /* ---------- figma export ---------- */
+
+  async function runSvgExport(kind: 'copy' | 'file') {
+    try {
+      const res =
+        kind === 'copy'
+          ? await copyBoardSvg(docRef.current)
+          : await exportBoardSvgFile(activeBoard.name, docRef.current)
+      const notes: string[] = []
+      if (res.missingImages.length > 0) {
+        const c = res.missingImages.length
+        notes.push(
+          `${c} image${c > 1 ? 's' : ''} could not be embedded (the host blocks cross-origin reads) and came through as a placeholder.`
+        )
+      }
+      if (res.clippedText.length > 0) {
+        const c = res.clippedText.length
+        notes.push(
+          `${c} sticky note${c > 1 ? 's' : ''} hold more text than fit${c > 1 ? '' : 's'} on them, so the export cuts them off the same way the board does.`
+        )
+      }
+      const size = Math.round(res.svg.length / 1024)
+      if (size > 2048) {
+        notes.push(`The SVG is ${Math.round(size / 1024)} MB — large enough that Figma may rasterize it. Try Export SVG and drag the file in instead.`)
+      }
+      const note = notes.length ? `\n\n${notes.join('\n\n')}` : ''
+      if (kind === 'copy') {
+        window.alert(`Board copied as SVG. Paste it into Figma or FigJam.${note}`)
+      } else if (note) {
+        window.alert(note.trim())
+      }
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'SVG export failed.')
+    }
+  }
+
+  async function runMiroExport() {
+    try {
+      const res = await exportBoardVsdx(activeBoard.name, docRef.current)
+      const notes: string[] = []
+      if (res.missingImages.length > 0) {
+        const c = res.missingImages.length
+        notes.push(`${c} image${c > 1 ? 's' : ''} could not be embedded (blocked by the host).`)
+      }
+      if (res.skipped.length > 0) notes.push(`${res.skipped.length} element(s) had no Visio equivalent.`)
+      window.alert(
+        'Saved a .vsdx file.\n\n' +
+          'In Miro: Shapes > More shapes > Import diagram\n' +
+          '(creates a new board; not available on Miro Free)' +
+          (notes.length ? `\n\n${notes.join('\n')}` : '')
+      )
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Export failed.')
+    }
+  }
+
+  async function runDrawioExport() {
+    try {
+      await exportBoardDrawio(activeBoard.name, docRef.current)
+      window.alert('Saved a .drawio file — open it at app.diagrams.net.')
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Export failed.')
+    }
+  }
+
   /* ---------- frame export ---------- */
 
   async function exportFrame(format: 'png' | 'pdf') {
@@ -1451,6 +1519,10 @@ export default function App() {
             setSelectedConnector(null)
           }}
           onExportFile={() => exportBoardFile(activeBoard.name, docRef.current)}
+          onExportSvg={() => runSvgExport('file')}
+          onCopySvg={() => runSvgExport('copy')}
+          onExportMiro={runMiroExport}
+          onExportDrawio={runDrawioExport}
           onImportFile={importBoardFromFile}
           onClose={() => setBoardsOpen(false)}
         />

@@ -2,7 +2,7 @@ import { toSvg } from 'html-to-image'
 import { CanvasElement, DocState } from './types'
 import { migrateDoc } from './state'
 
-function download(url: string, filename: string) {
+export function download(url: string, filename: string) {
   const a = document.createElement('a')
   a.href = url
   a.download = filename
@@ -11,7 +11,7 @@ function download(url: string, filename: string) {
   a.remove()
 }
 
-function safeName(name: string): string {
+export function safeName(name: string): string {
   return (name.trim() || 'untitled').replace(/[^\w\- ]+/g, '').replace(/\s+/g, '-').toLowerCase()
 }
 
