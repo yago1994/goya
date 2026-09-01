@@ -111,3 +111,43 @@ export function parseBoardFile(text: string): { name: string; doc: DocState } {
     doc: migrateDoc(doc),
   }
 }
+
+/* ---------- shared asset helpers ---------- */
+
+/**
+ * Images have to travel inside an export file: neither Figma nor Visio will
+ * fetch a remote href. Uploads are already data URLs; searched images
+ * (Openverse/Wikimedia) need a fetch, which can fail on CORS — callers report
+ * those rather than silently dropping the element.
+ */
+export async function inlineImage(url: string): Promise<string | null> {
+  if (url.startsWith('data:')) return url
+  try {
+    const res = await fetch(url, { mode: 'cors' })
+    if (!res.ok) return null
+    const blob = await res.blob()
+    return await new Promise<string>((resolve, reject) => {
+      const fr = new FileReader()
+      fr.onload = () => resolve(String(fr.result))
+      fr.onerror = () => reject(fr.error)
+      fr.readAsDataURL(blob)
+    })
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Lucide ships icons as React components, so the only way to their path data
+ * is to render one. react-dom/server is imported dynamically so it stays out
+ * of the main bundle — it only loads when a board actually contains an icon.
+ */
+export async function iconPaths(name: string): Promise<string> {
+  const { icons } = await import('lucide-react')
+  const { createElement } = await import('react')
+  const Icon = (icons as Record<string, any>)[name] ?? icons.Star
+  const { renderToStaticMarkup } = await import('react-dom/server')
+  const markup = renderToStaticMarkup(createElement(Icon, { width: 24, height: 24, strokeWidth: 1.6 }))
+  // keep the children, drop lucide's own <svg> wrapper
+  return markup.replace(/^<svg[^>]*>/, '').replace(/<\/svg>\s*$/, '')
+}

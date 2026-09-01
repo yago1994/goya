@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react'
-import { Check, ClipboardCopy, Download, FilePlus2, Network, Pencil, Trash2, Upload } from 'lucide-react'
+import { Check, Download, FilePlus2, Network, Pencil, Trash2, Upload } from 'lucide-react'
 import { BoardMeta } from '../types'
 
 interface Props {
@@ -10,10 +10,7 @@ interface Props {
   onRename: (id: string, name: string) => void
   onDelete: (id: string) => void
   onExportFile: () => void
-  onExportSvg: () => void
-  onCopySvg: () => void
   onExportMiro: () => void
-  onExportDrawio: () => void
   onImportFile: (file: File) => void
   onClose: () => void
 }
@@ -26,10 +23,7 @@ export function BoardsPanel({
   onRename,
   onDelete,
   onExportFile,
-  onExportSvg,
-  onCopySvg,
   onExportMiro,
-  onExportDrawio,
   onImportFile,
   onClose,
 }: Props) {
@@ -112,35 +106,11 @@ export function BoardsPanel({
         <div className="boards-divider" />
         <button
           className="boards-action"
-          title="Copy the board as SVG — paste straight into Figma or FigJam"
-          onClick={onCopySvg}
-        >
-          <ClipboardCopy size={14} />
-          Copy for Figma
-        </button>
-        <button
-          className="boards-action"
-          title="Download an SVG you can drag onto a Figma or FigJam canvas"
-          onClick={onExportSvg}
-        >
-          <Download size={14} />
-          Export SVG
-        </button>
-        <button
-          className="boards-action"
           title="Download a .vsdx file — import it in Miro via Shapes > More shapes > Import diagram"
           onClick={onExportMiro}
         >
           <Network size={14} />
           Export for Miro
-        </button>
-        <button
-          className="boards-action"
-          title="Download a .drawio file for diagrams.net"
-          onClick={onExportDrawio}
-        >
-          <Download size={14} />
-          Export .drawio
         </button>
         <input
           ref={fileRef}
