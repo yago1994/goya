@@ -1,6 +1,5 @@
 import { CanvasElement, COLORS, DocState } from './types'
-import { download, safeName } from './exporting'
-import { iconPaths, inlineImage } from './svgExport'
+import { download, iconPaths, inlineImage, safeName } from './exporting'
 import { makeZip, utf8, ZipEntry } from './vsdx/zip'
 import {
   APP_XML,
