@@ -830,11 +830,15 @@ input {
   position: fixed;
   top: 16px;
   left: 16px;
+  /* Browser page zoom shrinks the CSS viewport, so the bar has to stay inside
+     it rather than running the pills off the right edge. */
+  right: 16px;
   z-index: 50;
   display: flex;
   align-items: center;
   gap: 10px;
   pointer-events: none;
+  min-width: 0;
 }
 
 .top-bar > * {
@@ -842,6 +846,7 @@ input {
 }
 
 .wordmark {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -862,7 +867,16 @@ input {
   background: var(--ink);
 }
 
+/* the hint is the first thing to go when the bar runs out of room */
+@media (max-width: 620px) {
+  .hint-pill {
+    display: none !important;
+  }
+}
+
 .hint-pill {
+  flex: none;
+  white-space: nowrap;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -1051,8 +1065,11 @@ kbd {
   font-weight: 500;
   color: var(--ink);
   max-width: 220px;
+  min-width: 0;
+  flex: 0 1 auto;
   white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .board-switcher:hover {
