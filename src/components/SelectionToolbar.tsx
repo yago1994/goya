@@ -19,7 +19,8 @@ interface Props {
   elements: CanvasElement[]
   onColor: (color: string) => void
   onBorder: (color: string) => void
-  onFontSize: (size: number) => void
+  /** null clears the explicit size, returning the element to its default */
+  onFontSize: (size: number | null) => void
   onToggleBold: () => void
   onAlign: (a: TextAlign) => void
   // onFront: () => void
@@ -106,6 +107,10 @@ export function SelectionToolbar({
   const sizeOptions = FONT_SIZES.includes(fontSize)
     ? FONT_SIZES
     : [...FONT_SIZES, fontSize].sort((a, b) => a - b)
+  // '' is Auto: no explicit size, so the element uses its type default and a
+  // sticky/shape auto-shrinks oversized text to its box
+  const sizeValue = single?.fontSize === undefined ? '' : String(fontSize)
+  const onSizePick = (v: string) => onFontSize(v === '' ? null : Number(v))
 
   // Stickies and shapes get a size control too — auto-fit shrinks text to their
   // box, so this sets the ceiling. It sits in the tail, not the text row, so
@@ -131,9 +136,10 @@ export function SelectionToolbar({
             <select
               className="font-size-select"
               title="Font size"
-              value={fontSize}
-              onChange={(e) => onFontSize(Number(e.target.value))}
+              value={sizeValue}
+              onChange={(e) => onSizePick(e.target.value)}
             >
+              <option value="">Auto</option>
               {sizeOptions.map((s) => (
                 <option key={s} value={s}>
                   {s}
@@ -244,10 +250,11 @@ export function SelectionToolbar({
       {showSize && (
         <select
           className="font-size-select"
-          title="Text size — shrinks to fit the box"
-          value={fontSize}
-          onChange={(e) => onFontSize(Number(e.target.value))}
+          title="Text size — Auto fits the text to the note; a set size scales the note"
+          value={sizeValue}
+          onChange={(e) => onSizePick(e.target.value)}
         >
+          <option value="">Auto</option>
           {sizeOptions.map((s) => (
             <option key={s} value={s}>
               {s}

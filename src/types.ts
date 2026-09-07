@@ -28,7 +28,8 @@ export interface CanvasElement {
   border?: string
   /** heading level 1–4 */
   level?: number
-  /** explicit font size (text / heading); overrides the level default */
+  /** explicit font size; overrides the type (or heading level) default. On a
+   *  sticky or shape it is the size the box is grown to accommodate. */
   fontSize?: number
   /** bold override; undefined = the type's default weight */
   bold?: boolean

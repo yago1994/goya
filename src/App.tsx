@@ -61,6 +61,8 @@ const PAN_SPEED = 0.55
 const MAX_ZOOM_STEP = 40
 /** eraser reach in screen px, so it stays a constant size on screen at any zoom */
 const ERASER_RADIUS = 11
+/** floor for a sticky/shape box when its text size scales it down */
+const MIN_BOX = 40
 
 /** WebKit-only pinch event; not in lib.dom, so declare the bits we read. */
 interface GestureEvent extends UIEvent {
@@ -1134,20 +1136,34 @@ export default function App() {
 
   /* ---------- text formatting ---------- */
 
-  function setFontSize(size: number) {
+  function setFontSize(size: number | null) {
     commit((d) =>
       updateElements(d, selection, (el) => {
         if (!FONT_SIZEABLE.has(el.type)) return el
+        // Auto: drop the override so the type default applies again and a
+        // sticky just auto-fits. The box is left alone — this is the way back
+        // from an explicit size without disturbing the layout.
+        if (size === null) return el.fontSize === undefined ? el : { ...el, fontSize: undefined }
         const cur = effectiveFontSize(el)
         if (size === cur) return el
+        const k = size / cur
         // text/heading own their height, so keep the box proportional and
         // multi-line text stays visible
         if (el.type === 'text' || el.type === 'heading') {
-          return { ...el, fontSize: size, h: Math.max(28, Math.round(el.h * (size / cur))) }
+          return { ...el, fontSize: size, h: Math.max(28, Math.round(el.h * k)) }
         }
-        // a sticky or shape keeps the box the user drew; auto-fit caps the
-        // text inside it, so this only raises the ceiling
-        return { ...el, fontSize: size }
+        // A sticky or shape scales with its text. Text k× bigger needs k× the
+        // width *and* k× the height to wrap the same way, so scaling both keeps
+        // the note geometrically similar and the size picked renders exactly.
+        // Height alone would need k² and balloon into a sliver; leaving the box
+        // alone makes auto-fit clamp the text straight back, which is what made
+        // every size above the box's limit look like it did nothing.
+        return {
+          ...el,
+          fontSize: size,
+          w: Math.max(MIN_BOX, Math.round(el.w * k)),
+          h: Math.max(MIN_BOX, Math.round(el.h * k)),
+        }
       })
     )
   }
