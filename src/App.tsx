@@ -20,6 +20,7 @@ import {
   DrawSettings,
   EDITABLE_TYPES,
   ElementType,
+  FONT_SIZEABLE,
   FONT_SIZES,
   HEADING_SIZES,
   PEN_COLORS,
@@ -1136,11 +1137,17 @@ export default function App() {
   function setFontSize(size: number) {
     commit((d) =>
       updateElements(d, selection, (el) => {
-        if (el.type !== 'text' && el.type !== 'heading') return el
+        if (!FONT_SIZEABLE.has(el.type)) return el
         const cur = effectiveFontSize(el)
         if (size === cur) return el
-        // keep the box proportional so multi-line text stays visible
-        return { ...el, fontSize: size, h: Math.max(28, Math.round(el.h * (size / cur))) }
+        // text/heading own their height, so keep the box proportional and
+        // multi-line text stays visible
+        if (el.type === 'text' || el.type === 'heading') {
+          return { ...el, fontSize: size, h: Math.max(28, Math.round(el.h * (size / cur))) }
+        }
+        // a sticky or shape keeps the box the user drew; auto-fit caps the
+        // text inside it, so this only raises the ceiling
+        return { ...el, fontSize: size }
       })
     )
   }
