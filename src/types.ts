@@ -163,6 +163,10 @@ export const DEFAULTS: Record<ElementType, { w: number; h: number }> = {
 
 export const EDITABLE_TYPES = ['sticky', 'text', 'heading', 'rect', 'ellipse']
 
+/** Types offering a font-size control. Stickies and shapes auto-fit text to
+ *  their box, so the chosen size is a ceiling rather than an exact size. */
+export const FONT_SIZEABLE = new Set(['text', 'heading', 'sticky', 'rect', 'ellipse'])
+
 export function newId(): string {
   return Math.random().toString(36).slice(2, 10)
 }

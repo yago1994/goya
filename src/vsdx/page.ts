@@ -151,7 +151,14 @@ export function shapeXml(
         `<Shape ID="${id}" NameU="Sticky Note" Name="Sticky Note" LineStyle="0" FillStyle="0" TextStyle="0" Type="Shape">` +
         frameCells(el, ctx.box) +
         `<Cell N="FillForegnd" V="${c.fill}"/><Cell N="LinePattern" V="0"/>` +
-        textBlock(el.text ?? '', { size: 16, color: TEXT_BLACK, bold, align: 'center' }) +
+        // the chosen size, not the old hard-coded 16 — Visio does its own
+        // fitting, so the on-canvas auto-shrink doesn't carry over
+        textBlock(el.text ?? '', {
+          size: effectiveFontSize(el),
+          color: TEXT_BLACK,
+          bold,
+          align: 'center',
+        }) +
         rectGeometry(el, false, true) +
         `</Shape>`
       )
@@ -173,7 +180,12 @@ export function shapeXml(
         `<Cell N="FillForegnd" V="${fill}"/>` +
         (hasFill ? '' : `<Cell N="FillPattern" V="0"/>`) +
         lineCells +
-        textBlock(el.text ?? '', { size: 15, color: TEXT_BLACK, bold, align: 'center' }) +
+        textBlock(el.text ?? '', {
+          size: effectiveFontSize(el),
+          color: TEXT_BLACK,
+          bold,
+          align: 'center',
+        }) +
         (el.type === 'ellipse'
           ? ellipseGeometry(el, !hasLine && hasFill)
           : rectGeometry(el, !hasFill, !hasLine && hasFill)) +

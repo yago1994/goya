@@ -10,7 +10,7 @@ import {
   FileText,
   Ban,
 } from 'lucide-react'
-import { CanvasElement, COLORS, FONT_SIZES, PEN_COLORS, TextAlign } from '../types'
+import { CanvasElement, COLORS, FONT_SIZEABLE, FONT_SIZES, PEN_COLORS, TextAlign } from '../types'
 import { effectiveFontSize, effectiveWeight } from './ElementView'
 
 interface Props {
@@ -107,10 +107,16 @@ export function SelectionToolbar({
     ? FONT_SIZES
     : [...FONT_SIZES, fontSize].sort((a, b) => a - b)
 
+  // Stickies and shapes get a size control too — auto-fit shrinks text to their
+  // box, so this sets the ceiling. It sits in the tail, not the text row, so
+  // they keep their fill swatches.
+  const showSize = !!single && !isText && FONT_SIZEABLE.has(single.type)
+
   const rows = isText || showFill || allShapes || allDraw
   // buttons that sit after the swatch rows
-  const tail = isFrame || (showBold && !isText)
-  const halfWidth = isText ? 200 : rows ? (allShapes ? 210 : 175) : isFrame ? 140 : 70
+  const tail = isFrame || showSize || (showBold && !isText)
+  const halfWidth =
+    (isText ? 200 : rows ? (allShapes ? 210 : 175) : isFrame ? 140 : 70) + (showSize ? 30 : 0)
   const left = Math.max(halfWidth + 12, Math.min(x, window.innerWidth - halfWidth - 12))
   const top = Math.max(isText || allShapes ? 100 : 64, y)
 
@@ -234,6 +240,20 @@ export function SelectionToolbar({
             <span>PDF</span>
           </button>
         </>
+      )}
+      {showSize && (
+        <select
+          className="font-size-select"
+          title="Text size — shrinks to fit the box"
+          value={fontSize}
+          onChange={(e) => onFontSize(Number(e.target.value))}
+        >
+          {sizeOptions.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
       )}
       {showBold && !isText && (
         <button

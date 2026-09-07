@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useLayoutEffect, useRef } from 'react'
 import { icons } from 'lucide-react'
 import { CanvasElement, COLORS, EDITABLE_TYPES, HEADING_SIZES, PEN_COLORS, PEN_STYLES, Side } from '../types'
 import { strokePath, strokeWidthOf } from '../drawing'
@@ -56,8 +56,18 @@ function ResizeHandles({
   )
 }
 
+/**
+ * Types whose box is fixed by the user, so oversized text has to shrink to fit
+ * rather than spill out of it. Text and headings grow their own height instead.
+ */
+const AUTOFIT_TYPES = new Set(['sticky', 'rect', 'ellipse'])
+
+/** How small auto-fit is allowed to go before it gives up and clips. */
+const MIN_FIT_FONT = 8
+
 export function defaultFontSize(el: CanvasElement): number {
   if (el.type === 'heading') return (HEADING_SIZES[el.level ?? 1] ?? HEADING_SIZES[1]).size
+  if (el.type === 'rect' || el.type === 'ellipse') return 15
   return 16
 }
 
@@ -94,11 +104,49 @@ export const ElementView = React.memo(function ElementView({
   // Text content is set via ref (not React children) so typing doesn't fight
   // the virtual DOM. Sync from state when not editing (undo/redo);
   // focus and place caret at end when editing starts.
-  useEffect(() => {
+  // A layout effect, so the auto-fit pass below measures the current text.
+  useLayoutEffect(() => {
     const node = textRef.current
     if (!node) return
     if (!editing && node.innerText !== (el.text ?? '')) node.innerText = el.text ?? ''
   }, [el.text, editing])
+
+  // A sticky or shape has a box the user chose, so text too big for it shrinks
+  // to fit instead of overflowing (and being clipped by .content's overflow).
+  // Binary search over whole pixels: ~6 reflows, and monotone enough for wrapping.
+  useLayoutEffect(() => {
+    const box = textRef.current
+    const holder = box?.parentElement
+    if (!box || !holder || !AUTOFIT_TYPES.has(el.type)) return
+    const base = effectiveFontSize(el)
+    const cs = getComputedStyle(holder)
+    const availH =
+      holder.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom)
+    const availW =
+      holder.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)
+    if (!(availH > 0) || !(availW > 0)) return
+
+    const fits = (size: number) => {
+      box.style.fontSize = `${size}px`
+      // half a pixel of slack: sub-pixel line heights otherwise never "fit"
+      return box.scrollHeight <= availH + 0.5 && box.scrollWidth <= availW + 0.5
+    }
+
+    if (fits(base)) return
+    let lo = MIN_FIT_FONT
+    let hi = base
+    let best = MIN_FIT_FONT
+    while (lo <= hi) {
+      const mid = Math.floor((lo + hi) / 2)
+      if (fits(mid)) {
+        best = mid
+        lo = mid + 1
+      } else {
+        hi = mid - 1
+      }
+    }
+    box.style.fontSize = `${best}px`
+  }, [el.type, el.text, el.w, el.h, el.fontSize, el.bold, el.level, editing])
 
   useEffect(() => {
     const node = textRef.current
@@ -170,7 +218,12 @@ export const ElementView = React.memo(function ElementView({
       content = (
         <div
           className="content"
-          style={{ background: color.fill, color: color.text, fontWeight: effectiveWeight(el) }}
+          style={{
+            background: color.fill,
+            color: color.text,
+            fontSize: effectiveFontSize(el),
+            fontWeight: effectiveWeight(el),
+          }}
         >
           {textBox}
         </div>
@@ -214,7 +267,13 @@ export const ElementView = React.memo(function ElementView({
       content = (
         <div
           className="content"
-          style={{ background: fill, color: textColor, border: borderCss, fontWeight: effectiveWeight(el) }}
+          style={{
+            background: fill,
+            color: textColor,
+            border: borderCss,
+            fontSize: effectiveFontSize(el),
+            fontWeight: effectiveWeight(el),
+          }}
         >
           {textBox}
         </div>

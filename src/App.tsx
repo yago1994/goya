@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   addConnector,
   addElement,
@@ -20,6 +20,7 @@ import {
   DrawSettings,
   EDITABLE_TYPES,
   ElementType,
+  FONT_SIZEABLE,
   FONT_SIZES,
   HEADING_SIZES,
   PEN_COLORS,
@@ -60,6 +61,14 @@ const PAN_SPEED = 0.55
 const MAX_ZOOM_STEP = 40
 /** eraser reach in screen px, so it stays a constant size on screen at any zoom */
 const ERASER_RADIUS = 11
+
+/** WebKit-only pinch event; not in lib.dom, so declare the bits we read. */
+interface GestureEvent extends UIEvent {
+  scale: number
+  rotation: number
+  clientX: number
+  clientY: number
+}
 
 type Gesture =
   | { mode: 'pan'; startX: number; startY: number; vp: Viewport }
@@ -199,6 +208,18 @@ export default function App() {
     x: wx * vpRef.current.zoom + vpRef.current.x,
     y: wy * vpRef.current.zoom + vpRef.current.y,
   })
+
+  // Every way of zooming — wheel, pinch, keys, buttons — funnels through here so
+  // the point under (cx, cy) stays put. Stable identity: the wheel and gesture
+  // listeners are installed once and close over it.
+  const zoomAt = useCallback((cx: number, cy: number, factor: number) => {
+    setVp((v) => {
+      const zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, v.zoom * factor))
+      if (zoom === v.zoom) return v
+      const k = zoom / v.zoom
+      return { zoom, x: cx - (cx - v.x) * k, y: cy - (cy - v.y) * k }
+    })
+  }, [])
 
   /* ---------- creation ---------- */
 
@@ -832,33 +853,53 @@ export default function App() {
     const node = rootRef.current
     if (!node) return
     const onWheel = (e: WheelEvent) => {
-      // let overlays (slash menu, pickers, toolbars) scroll natively
-      if ((e.target as HTMLElement).closest?.('.slash-menu, .picker, .sel-toolbar')) return
-      e.preventDefault()
       // wheels report lines or pages on some devices — normalise to pixels
       const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1
       const dx = e.deltaX * unit
       const dy = e.deltaY * unit
       if (e.ctrlKey || e.metaKey) {
+        // A trackpad pinch arrives as ctrl+wheel. Claim it *before* the overlay
+        // check below: letting it through would zoom the whole page, which drags
+        // the fixed chrome out of view instead of scaling the board.
+        e.preventDefault()
         // clamp per event so one hard flick can't jump several zoom steps
         const step = Math.max(-MAX_ZOOM_STEP, Math.min(MAX_ZOOM_STEP, dy))
-        const factor = Math.exp(-step * ZOOM_SPEED)
-        setVp((v) => {
-          const zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, v.zoom * factor))
-          const k = zoom / v.zoom
-          return {
-            zoom,
-            x: e.clientX - (e.clientX - v.x) * k,
-            y: e.clientY - (e.clientY - v.y) * k,
-          }
-        })
-      } else {
-        setVp((v) => ({ ...v, x: v.x - dx * PAN_SPEED, y: v.y - dy * PAN_SPEED }))
+        zoomAt(e.clientX, e.clientY, Math.exp(-step * ZOOM_SPEED))
+        return
       }
+      // let overlays (slash menu, pickers, toolbars) scroll natively
+      if ((e.target as HTMLElement).closest?.('.slash-menu, .picker, .sel-toolbar')) return
+      e.preventDefault()
+      setVp((v) => ({ ...v, x: v.x - dx * PAN_SPEED, y: v.y - dy * PAN_SPEED }))
     }
     node.addEventListener('wheel', onWheel, { passive: false })
-    return () => node.removeEventListener('wheel', onWheel)
-  }, [])
+
+    // Safari on macOS reports a trackpad pinch as gesture events rather than
+    // ctrl+wheel, so without these the page zooms and the toolbars scroll away.
+    let gestureScale = 1
+    const onGestureStart = (e: Event) => {
+      e.preventDefault()
+      gestureScale = (e as GestureEvent).scale || 1
+    }
+    const onGestureChange = (e: Event) => {
+      e.preventDefault()
+      const g = e as GestureEvent
+      const scale = g.scale || 1
+      if (gestureScale > 0) zoomAt(g.clientX, g.clientY, scale / gestureScale)
+      gestureScale = scale
+    }
+    const onGestureEnd = (e: Event) => e.preventDefault()
+    node.addEventListener('gesturestart', onGestureStart, { passive: false })
+    node.addEventListener('gesturechange', onGestureChange, { passive: false })
+    node.addEventListener('gestureend', onGestureEnd, { passive: false })
+
+    return () => {
+      node.removeEventListener('wheel', onWheel)
+      node.removeEventListener('gesturestart', onGestureStart)
+      node.removeEventListener('gesturechange', onGestureChange)
+      node.removeEventListener('gestureend', onGestureEnd)
+    }
+  }, [zoomAt])
 
   /* ---------- clipboard ---------- */
 
@@ -972,6 +1013,24 @@ export default function App() {
         setSlash({ screenX: x, screenY: y, worldX: w.x, worldY: w.y })
         return
       }
+      // Cmd/Ctrl +/-/0 zoom the board, not the browser page. Left to the
+      // browser they change the page zoom, which pushes the fixed toolbars
+      // off screen instead of scaling the canvas.
+      if (mod && (e.key === '=' || e.key === '+')) {
+        e.preventDefault()
+        zoomBy(1.25)
+        return
+      }
+      if (mod && (e.key === '-' || e.key === '_')) {
+        e.preventDefault()
+        zoomBy(0.8)
+        return
+      }
+      if (mod && e.key === '0') {
+        e.preventDefault()
+        setVp((v) => ({ ...v, zoom: 1 }))
+        return
+      }
       if (mod && e.key.toLowerCase() === 'z') {
         e.preventDefault()
         e.shiftKey ? redo() : undo()
@@ -1078,11 +1137,17 @@ export default function App() {
   function setFontSize(size: number) {
     commit((d) =>
       updateElements(d, selection, (el) => {
-        if (el.type !== 'text' && el.type !== 'heading') return el
+        if (!FONT_SIZEABLE.has(el.type)) return el
         const cur = effectiveFontSize(el)
         if (size === cur) return el
-        // keep the box proportional so multi-line text stays visible
-        return { ...el, fontSize: size, h: Math.max(28, Math.round(el.h * (size / cur))) }
+        // text/heading own their height, so keep the box proportional and
+        // multi-line text stays visible
+        if (el.type === 'text' || el.type === 'heading') {
+          return { ...el, fontSize: size, h: Math.max(28, Math.round(el.h * (size / cur))) }
+        }
+        // a sticky or shape keeps the box the user drew; auto-fit caps the
+        // text inside it, so this only raises the ceiling
+        return { ...el, fontSize: size }
       })
     )
   }
@@ -1177,13 +1242,7 @@ export default function App() {
   /* ---------- zoom controls ---------- */
 
   function zoomBy(factor: number) {
-    const cx = window.innerWidth / 2
-    const cy = window.innerHeight / 2
-    setVp((v) => {
-      const zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, v.zoom * factor))
-      const k = zoom / v.zoom
-      return { zoom, x: cx - (cx - v.x) * k, y: cy - (cy - v.y) * k }
-    })
+    zoomAt(window.innerWidth / 2, window.innerHeight / 2, factor)
   }
 
   function fitContent() {
