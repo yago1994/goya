@@ -8,6 +8,7 @@ import {
   // SendToBack,
   FileImage,
   FileText,
+  Frame,
   Ban,
 } from 'lucide-react'
 import { CanvasElement, COLORS, FONT_SIZEABLE, FONT_SIZES, PEN_COLORS, TextAlign } from '../types'
@@ -27,6 +28,8 @@ interface Props {
   // onBack: () => void
   onExportPng: () => void
   onExportPdf: () => void
+  /** wrap the selection in a new frame */
+  onFrame: () => void
 }
 
 const FILL_COLORABLE = new Set(['sticky', 'rect', 'ellipse', 'icon'])
@@ -91,6 +94,7 @@ export function SelectionToolbar({
   // onBack,
   onExportPng,
   onExportPdf,
+  onFrame,
 }: Props) {
   const single = elements.length === 1 ? elements[0] : null
   const isFrame = single?.type === 'frame'
@@ -117,11 +121,16 @@ export function SelectionToolbar({
   // they keep their fill swatches.
   const showSize = !!single && !isText && FONT_SIZEABLE.has(single.type)
 
+  // a multi-selection can be wrapped in a frame, which then exports to PNG/PDF
+  const canFrame = elements.length > 1
+
   const rows = isText || showFill || allShapes || allDraw
   // buttons that sit after the swatch rows
-  const tail = isFrame || showSize || (showBold && !isText)
+  const tail = isFrame || canFrame || showSize || (showBold && !isText)
   const halfWidth =
-    (isText ? 200 : rows ? (allShapes ? 210 : 175) : isFrame ? 140 : 70) + (showSize ? 30 : 0)
+    (isText ? 200 : rows ? (allShapes ? 210 : 175) : isFrame ? 140 : 70) +
+    (showSize ? 30 : 0) +
+    (canFrame ? 40 : 0)
   const left = Math.max(halfWidth + 12, Math.min(x, window.innerWidth - halfWidth - 12))
   const top = Math.max(isText || allShapes ? 100 : 64, y)
 
@@ -246,6 +255,12 @@ export function SelectionToolbar({
             <span>PDF</span>
           </button>
         </>
+      )}
+      {canFrame && (
+        <button className="tool-btn wide" title="Frame selection (⌘⌥G)" onClick={onFrame}>
+          <Frame size={15} />
+          <span>Frame</span>
+        </button>
       )}
       {showSize && (
         <select

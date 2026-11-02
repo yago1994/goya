@@ -1051,6 +1051,13 @@ export default function App() {
         duplicateSelection()
         return
       }
+      // ⌘⌥G frames the selection (Figma's binding). e.code, since Option
+      // rewrites e.key on macOS
+      if (mod && e.altKey && e.code === 'KeyG') {
+        e.preventDefault()
+        frameSelection()
+        return
+      }
       if (mod && e.key.toLowerCase() === 'a') {
         e.preventDefault()
         setSelection(new Set(docRef.current.elements.map((el) => el.id)))
@@ -1117,6 +1124,33 @@ export default function App() {
       return next
     })
     setSelection(new Set(clones.map((c) => c.id)))
+  }
+
+  /** Wrap the selection in a new frame, padded, so it can be moved and exported as one. */
+  function frameSelection() {
+    const els = docRef.current.elements.filter((el) => selection.has(el.id))
+    if (els.length === 0) return
+    const pad = 40
+    const minX = Math.min(...els.map((e) => e.x)) - pad
+    const minY = Math.min(...els.map((e) => e.y)) - pad
+    const maxX = Math.max(...els.map((e) => e.x + e.w)) + pad
+    const maxY = Math.max(...els.map((e) => e.y + e.h)) + pad
+    const frame: CanvasElement = {
+      id: newId(),
+      type: 'frame',
+      text: '',
+      x: Math.round(minX),
+      y: Math.round(minY),
+      w: Math.round(maxX - minX),
+      h: Math.round(maxY - minY),
+    }
+    // prepend: frames paint in insertion order, so the new outer frame must
+    // sit before any frame it wraps or its body would cover them
+    commit((d) => ({ ...d, elements: [frame, ...d.elements] }))
+    setSelection(new Set([frame.id]))
+    setSelectedConnector(null)
+    editBase.current = docRef.current
+    setEditingId(frame.id)
   }
 
   function setSelectionColor(color: string) {
@@ -1578,6 +1612,7 @@ export default function App() {
           onAlign={setAlign}
           onExportPng={() => exportFrame('png')}
           onExportPdf={() => exportFrame('pdf')}
+          onFrame={frameSelection}
         />
       )}
 
