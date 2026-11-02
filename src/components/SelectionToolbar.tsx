@@ -8,6 +8,7 @@ import {
   // SendToBack,
   FileImage,
   FileText,
+  Frame,
   Ban,
 } from 'lucide-react'
 import { CanvasElement, COLORS, FONT_SIZEABLE, FONT_SIZES, PEN_COLORS, TextAlign } from '../types'
@@ -19,13 +20,16 @@ interface Props {
   elements: CanvasElement[]
   onColor: (color: string) => void
   onBorder: (color: string) => void
-  onFontSize: (size: number) => void
+  /** null clears the explicit size, returning the element to its default */
+  onFontSize: (size: number | null) => void
   onToggleBold: () => void
   onAlign: (a: TextAlign) => void
   // onFront: () => void
   // onBack: () => void
   onExportPng: () => void
   onExportPdf: () => void
+  /** wrap the selection in a new frame */
+  onFrame: () => void
 }
 
 const FILL_COLORABLE = new Set(['sticky', 'rect', 'ellipse', 'icon'])
@@ -90,6 +94,7 @@ export function SelectionToolbar({
   // onBack,
   onExportPng,
   onExportPdf,
+  onFrame,
 }: Props) {
   const single = elements.length === 1 ? elements[0] : null
   const isFrame = single?.type === 'frame'
@@ -106,17 +111,26 @@ export function SelectionToolbar({
   const sizeOptions = FONT_SIZES.includes(fontSize)
     ? FONT_SIZES
     : [...FONT_SIZES, fontSize].sort((a, b) => a - b)
+  // '' is Auto: no explicit size, so the element uses its type default and a
+  // sticky/shape auto-shrinks oversized text to its box
+  const sizeValue = single?.fontSize === undefined ? '' : String(fontSize)
+  const onSizePick = (v: string) => onFontSize(v === '' ? null : Number(v))
 
   // Stickies and shapes get a size control too — auto-fit shrinks text to their
   // box, so this sets the ceiling. It sits in the tail, not the text row, so
   // they keep their fill swatches.
   const showSize = !!single && !isText && FONT_SIZEABLE.has(single.type)
 
+  // a multi-selection can be wrapped in a frame, which then exports to PNG/PDF
+  const canFrame = elements.length > 1
+
   const rows = isText || showFill || allShapes || allDraw
   // buttons that sit after the swatch rows
-  const tail = isFrame || showSize || (showBold && !isText)
+  const tail = isFrame || canFrame || showSize || (showBold && !isText)
   const halfWidth =
-    (isText ? 200 : rows ? (allShapes ? 210 : 175) : isFrame ? 140 : 70) + (showSize ? 30 : 0)
+    (isText ? 200 : rows ? (allShapes ? 210 : 175) : isFrame ? 140 : 70) +
+    (showSize ? 30 : 0) +
+    (canFrame ? 40 : 0)
   const left = Math.max(halfWidth + 12, Math.min(x, window.innerWidth - halfWidth - 12))
   const top = Math.max(isText || allShapes ? 100 : 64, y)
 
@@ -131,9 +145,10 @@ export function SelectionToolbar({
             <select
               className="font-size-select"
               title="Font size"
-              value={fontSize}
-              onChange={(e) => onFontSize(Number(e.target.value))}
+              value={sizeValue}
+              onChange={(e) => onSizePick(e.target.value)}
             >
+              <option value="">Auto</option>
               {sizeOptions.map((s) => (
                 <option key={s} value={s}>
                   {s}
@@ -241,13 +256,20 @@ export function SelectionToolbar({
           </button>
         </>
       )}
+      {canFrame && (
+        <button className="tool-btn wide" title="Frame selection (⌘⌥G)" onClick={onFrame}>
+          <Frame size={15} />
+          <span>Frame</span>
+        </button>
+      )}
       {showSize && (
         <select
           className="font-size-select"
-          title="Text size — shrinks to fit the box"
-          value={fontSize}
-          onChange={(e) => onFontSize(Number(e.target.value))}
+          title="Text size — Auto fits the text to the note; a set size scales the note"
+          value={sizeValue}
+          onChange={(e) => onSizePick(e.target.value)}
         >
+          <option value="">Auto</option>
           {sizeOptions.map((s) => (
             <option key={s} value={s}>
               {s}
